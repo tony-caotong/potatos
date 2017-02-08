@@ -1,14 +1,15 @@
 /**
-* 	Masked potato salad.
-*		By Cao tong <tony_caotong@gmail.com>
-*		AT 2017-02-07
-*
-*/
+ * 	Masked potato salad.
+ *		by Cao tong <tony_caotong@gmail.com>
+ *		@ 2017-02-07
+ *
+ */
 
 #include <stdio.h>
+#include <unistd.h>
 
 #include <time.h>
-#include <unistd.h>
+#include <signal.h>
 
 #include <rte_ethdev.h>
 #include <rte_mempool.h>
@@ -22,6 +23,22 @@
 struct priv{
 };
 
+int Quit = 0;
+int Usr1 = 0;
+
+void _sig_handle(int sig)
+{
+	switch (sig) {
+	case SIGINT:
+		Quit = 1;
+		break;
+	case SIGUSR1:
+		break;
+	default:
+		printf("_sig_handle: default\n");
+		break;
+	}
+}
 
 void binary_print(char* capital, char* buf, size_t length)
 {
@@ -29,14 +46,14 @@ void binary_print(char* capital, char* buf, size_t length)
 	
 	printf("Capital: [%s]\n", capital);
 	while(i < length) {
-		if (i%16 == 0)
-			printf("0x%016lx -- ", (unsigned long)&buf[i]);
+		if (i%32 == 0)
+			printf("0x%016lx --     ", (unsigned long)&buf[i]);
 		printf("%02X", (unsigned char)buf[i]);
 		i++;
-		if (i%16 == 0 && i != length)
+		if (i%32 == 0 && i != length)
 			printf("\n");
 		else if (i%8 == 0)
-			printf("\t");
+			printf(" ");
 	}
 	printf("\n");
 }
@@ -51,7 +68,7 @@ void handle_mbuf(struct rte_mbuf* buf)
 	if (l > 1024) {
 		printf("%s\n", captial);
 	}
-//	binary_print(captial, p, l);
+	binary_print(captial, p, l);
 }
 
 static int lcore_hello(__attribute__((unused)) void *arg)
@@ -74,7 +91,7 @@ static int lcore_hello(__attribute__((unused)) void *arg)
 
 	old = time(NULL);
 	rx_sum = 0;
-	while (1) {
+	while (!Quit) {
 #if 0
 		sleep(1);
 		printf("heart beat from [core %u] [port %u] [queue %u]\n",
@@ -89,6 +106,7 @@ static int lcore_hello(__attribute__((unused)) void *arg)
 		for (i = 0; i < nb_rx; i++) {
 			buf = bufs[i];
 			handle_mbuf(buf);
+			rte_pktmbuf_free(buf);
 		}
 
 		/* emit infos */
@@ -102,6 +120,8 @@ static int lcore_hello(__attribute__((unused)) void *arg)
 			old = new;
 		}
 	}
+	printf("Bye from [core %u] [port %u] [queue %u]\n",
+		lcore_id, port_id, rx_queue_id);
 	return 0;
 }
 
@@ -133,6 +153,7 @@ int main(int argc, char** argv)
 	if (ret < 0) {
 		rte_panic("Cannot init EAL\n");
 	}
+	printf("rte_lcore_count: %d\n", rte_lcore_count());
 
 	/* 1. mem pool create */
 	mpool = rte_pktmbuf_pool_create("MBUF_POOL", 8192-1, 250,
@@ -185,6 +206,8 @@ int main(int argc, char** argv)
 	rte_eth_promiscuous_enable(port_id);
 	printf("init done!\n");
 
+	signal(SIGINT, _sig_handle);
+	signal(SIGUSR1, _sig_handle);
 	/* call lcore_hello() on every slave lcore */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		rte_eal_remote_launch(lcore_hello, NULL, lcore_id);
@@ -194,7 +217,7 @@ int main(int argc, char** argv)
 	lcore_hello(NULL);
 
 	rte_eal_mp_wait_lcore();
-
+	printf("ByeBye!\n");
 	return 0;
 }
 
