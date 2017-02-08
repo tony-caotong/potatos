@@ -22,49 +22,96 @@
 struct priv{
 };
 
+
+void binary_print(char* capital, char* buf, size_t length)
+{
+	int i = 0;
+	
+	printf("Capital: [%s]\n", capital);
+	while(i < length) {
+		if (i%16 == 0)
+			printf("0x%016lx -- ", (unsigned long)&buf[i]);
+		printf("%02X", (unsigned char)buf[i]);
+		i++;
+		if (i%16 == 0 && i != length)
+			printf("\n");
+		else if (i%8 == 0)
+			printf("\t");
+	}
+	printf("\n");
+}
+
+void handle_mbuf(struct rte_mbuf* buf)
+{
+	char captial[32];
+	char* p = buf->buf_addr + buf->data_off;
+	int l = buf->pkt_len;
+
+	snprintf(captial, sizeof(captial), "packet length: %d", l);
+	if (l > 1024) {
+		printf("%s\n", captial);
+	}
+//	binary_print(captial, p, l);
+}
+
 static int lcore_hello(__attribute__((unused)) void *arg)
 {
-	uint16_t nb_rx;
-	uint16_t buf_size;
-	uint32_t lcore_id;
-	uint8_t port_id;
-	uint16_t rx_queue_id;
-	uint32_t counter;
 	struct rte_mbuf** bufs;
+	struct rte_mbuf* buf;
 	
 	time_t old, new;
-	uint16_t rx_sum;
+	uint16_t rx_sum, nb_rx, buf_size, i;
 
-	port_id = 0;
-	buf_size = 16;
-	lcore_id = rte_lcore_id();
-	rx_queue_id = 7 - lcore_id;
-	bufs = malloc(buf_size * sizeof(struct rte_mbuf*));
+	uint8_t port_id = 0;
+	uint32_t lcore_id = rte_lcore_id();
+	uint16_t rx_queue_id = 7 - lcore_id;
 
 	printf("hello from [core %u] [port %u] [queue %u]\n",
 		lcore_id, port_id, rx_queue_id);
+
+	buf_size = 16;
+	bufs = malloc(buf_size * sizeof(struct rte_mbuf*));
+
 	old = time(NULL);
 	rx_sum = 0;
 	while (1) {
-		nb_rx = rte_eth_rx_burst(port_id, rx_queue_id, bufs, buf_size);
-		if (nb_rx > 0) {
-			rx_sum += nb_rx;
-			new = time(NULL);
-			if (new > old + 5) {
-				printf("thread[core: %d][port: %d][queue: %u]"\
-					" recv %u pkts\n",
-					lcore_id, port_id,
-					rx_queue_id, rx_sum);
-				rx_sum = 0;
-				old = new;
-			}
-		}
+#if 0
 		sleep(1);
 		printf("heart beat from [core %u] [port %u] [queue %u]\n",
 			lcore_id, port_id, rx_queue_id);
+#endif
+		nb_rx = rte_eth_rx_burst(port_id, rx_queue_id, bufs, buf_size);
+		if (nb_rx <= 0) {
+			continue;
+		}
+		
+		/* handle each pkt. */
+		for (i = 0; i < nb_rx; i++) {
+			buf = bufs[i];
+			handle_mbuf(buf);
+		}
+
+		/* emit infos */
+		rx_sum += nb_rx;
+		new = time(NULL);
+		if (new > old + 5) {
+			printf("thread[core: %d][port: %d][queue: %u]"\
+				" recv %u pkts\n",
+				lcore_id, port_id, rx_queue_id, rx_sum);
+			rx_sum = 0;
+			old = new;
+		}
 	}
 	return 0;
 }
+
+#if 0
+static uint16_t callback(uint8_t port, uint16_t queue, struct rte_mbuf *pkts[],
+			uint16_t nb_pkts, uint16_t max_pkts, void *user_param)
+{
+}
+#endif
+
 
 int main(int argc, char** argv)
 {
@@ -118,7 +165,7 @@ int main(int argc, char** argv)
 			perror("rte_dev_rx_queue_setup: ");
 			return -1;
 		}
-/*	
+#if 0
 		void* cb_handler;
 		cb_handler = rte_eth_add_rx_callback(port_id, i,
 			callback, NULL);
@@ -126,7 +173,7 @@ int main(int argc, char** argv)
 			perror("rte_eth_add_rx_callback: ");
 			return -1;
 		}
-*/
+#endif
 	}
 
 	ret = rte_eth_dev_start(port_id);
@@ -150,3 +197,4 @@ int main(int argc, char** argv)
 
 	return 0;
 }
+
