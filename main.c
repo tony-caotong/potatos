@@ -86,10 +86,10 @@ void binary_print(char* capital, char* buf, size_t length)
 	   priv_buf posit between struct rte_mbuf and data buffer.
 	2. buf->priv_size == buf->buf_addr - (buf + sizeof(*buf)).
 	3. the memory map like this:
-		.------------------------------------------------.
-		| rte_mbuf | priv buf |  *(1)  | pkt buf | *(2)  |
-		^----------^----------^--------^---------^-------^
-		a          b          c        d         e       f
+		.---------------------------------------------------.
+		| rte_mbuf | priv buf | headroom | pkt buf |  null  |
+		^----------^----------^----------^---------^--------^
+		a          b          c          d         e       f
 	    buf == a
 	    buf->buf_addr == c
 	    a + sizeof(struct rte_mbuf) == b
@@ -99,8 +99,11 @@ void binary_print(char* capital, char* buf, size_t length)
 	    d + buf->data_len == e
 	    c + buf->buf_len == f
 
-	*(1) length is 128, when testing, and not sure what is used for.
-	*(2) not sure what is used for.
+	"d - c" was defined by MACRO: RTE_PKTMBUF_HEADROOM 
+	"f - d" was defined by MACRO: RTE_MBUF_DEFAULT_DATAROOM	
+	"f - c" was a parameter passed to rte_pktmbuf_pool_create()
+	MUST: "f - d" >= 2KB
+
 */
 void handle_mbuf(struct rte_mbuf* buf)
 {
@@ -238,7 +241,21 @@ int main(int argc, char** argv)
 	printf("rte_lcore_count: %d\n", lcore_count);
 
 	/* 1. mem pool create */
-	mpool = rte_pktmbuf_pool_create("MBUF_POOL", 8192-1, 250,
+	/* Note:
+		n: n = (2^q - 1)
+
+		cache_size:
+		1. must be lower or equal to CONFIG_RTE_MEMPOOL_CACHE_MAX_SIZE
+			and n / 1.5
+		2. n modulo cache_size == 0
+
+		* Value of CONFIG_RTE_MEMPOOL_CACHE_MAX_SIZE is 512 which is
+		defined in file '$RTE_SDK/config/common_base'.
+
+		2^14 - 1 = 16383 = 3 * 43 * 127
+		3 * 127 = 381 < 512
+	*/
+	mpool = rte_pktmbuf_pool_create("MBUF_POOL", (1<<14)-1, 3*127,
 		sizeof(struct priv), RTE_MBUF_DEFAULT_BUF_SIZE, socket_id);
 	if (NULL == mpool) {
 		printf("rte_pktmbuf_pool_create: %s\n",
@@ -255,7 +272,7 @@ int main(int argc, char** argv)
 
 	ret = rte_eth_dev_configure(port_id, nb_rx_queue, 0, &eth_conf);
 	if (ret < 0) {
-		perror("rte_dev_eth_configure: ");
+		printf("Error rte_dev_eth_configure(): %d\n", ret);
 		return -1;
 	}
 	
@@ -308,6 +325,8 @@ int main(int argc, char** argv)
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		lcore_destroy(lcore_id);
 	}
+
+	/*TODO: release resources. */
 
 	printf("ByeBye!\n");
 	return 0;
