@@ -10,6 +10,7 @@
 
 #include <time.h>
 #include <signal.h>
+#include <semaphore.h>
 
 #include <rte_ethdev.h>
 #include <rte_mempool.h>
@@ -23,16 +24,29 @@
 struct priv{
 };
 
-int Quit = 0;
-int Usr1 = 0;
+struct share_block {
+	sem_t sem_monitor;
+} __attribute__((__packed__));
+
+static int Quit = 0;
+static struct share_block Shb[RTE_MAX_LCORE];
 
 void _sig_handle(int sig)
 {
+	int lcore_id;
+	sem_t* sm;
+
 	switch (sig) {
 	case SIGINT:
 		Quit = 1;
 		break;
 	case SIGUSR1:
+		RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+			sm = &(Shb[lcore_id].sem_monitor);
+			if (sem_post(sm) < 0) {
+				perror("sem_post: ");
+			}
+		}
 		break;
 	default:
 		printf("_sig_handle: default\n");
@@ -64,24 +78,50 @@ void handle_mbuf(struct rte_mbuf* buf)
 	char* p = buf->buf_addr + buf->data_off;
 	int l = buf->pkt_len;
 
+#if 0
 	snprintf(captial, sizeof(captial), "packet length: %d", l);
 	if (l > 1024) {
 		printf("%s\n", captial);
 	}
 	binary_print(captial, p, l);
+#endif
 }
 
-static int lcore_hello(__attribute__((unused)) void *arg)
+int lcore_init(uint32_t lcore_id)
+{
+	sem_t* sm = &(Shb[lcore_id].sem_monitor);
+
+	if (sem_init(sm, 0, 0) < 0) {
+		perror("sem_init: ");
+		return -1;
+	}
+	return 0;
+}
+
+int lcore_destroy(uint32_t lcore_id)
+{
+	sem_t* sm = &(Shb[lcore_id].sem_monitor);
+
+	if (sem_destroy(sm) < 0) {
+		perror("sem_destroy: ");
+		return -1;
+	}
+	return 0;
+}
+
+static int lcore_loop(__attribute__((unused)) void *arg)
 {
 	struct rte_mbuf** bufs;
 	struct rte_mbuf* buf;
 	
-	time_t old, new;
-	uint16_t rx_sum, nb_rx, buf_size, i;
+	uint64_t rx_sum;
+	uint16_t nb_rx, buf_size, i;
 
 	uint8_t port_id = 0;
 	uint32_t lcore_id = rte_lcore_id();
 	uint16_t rx_queue_id = 7 - lcore_id;
+	struct share_block* sb = Shb + lcore_id;
+	sem_t* sm = &(sb->sem_monitor);
 
 	printf("hello from [core %u] [port %u] [queue %u]\n",
 		lcore_id, port_id, rx_queue_id);
@@ -89,7 +129,6 @@ static int lcore_hello(__attribute__((unused)) void *arg)
 	buf_size = 16;
 	bufs = malloc(buf_size * sizeof(struct rte_mbuf*));
 
-	old = time(NULL);
 	rx_sum = 0;
 	while (!Quit) {
 #if 0
@@ -97,6 +136,14 @@ static int lcore_hello(__attribute__((unused)) void *arg)
 		printf("heart beat from [core %u] [port %u] [queue %u]\n",
 			lcore_id, port_id, rx_queue_id);
 #endif
+		if (sem_trywait(sm) == 0) {
+			printf("thread[core: %d][port: %d][queue: %u]"\
+				" recv %lu pkts\n",
+				lcore_id, port_id, rx_queue_id, rx_sum);
+		} else if (errno == EINVAL) {
+			printf("sem_trywait error [core %d]\n", lcore_id);
+		}
+
 		nb_rx = rte_eth_rx_burst(port_id, rx_queue_id, bufs, buf_size);
 		if (nb_rx <= 0) {
 			continue;
@@ -111,14 +158,6 @@ static int lcore_hello(__attribute__((unused)) void *arg)
 
 		/* emit infos */
 		rx_sum += nb_rx;
-		new = time(NULL);
-		if (new > old + 5) {
-			printf("thread[core: %d][port: %d][queue: %u]"\
-				" recv %u pkts\n",
-				lcore_id, port_id, rx_queue_id, rx_sum);
-			rx_sum = 0;
-			old = new;
-		}
 	}
 	printf("Bye from [core %u] [port %u] [queue %u]\n",
 		lcore_id, port_id, rx_queue_id);
@@ -132,6 +171,11 @@ static uint16_t callback(uint8_t port, uint16_t queue, struct rte_mbuf *pkts[],
 }
 #endif
 
+int master_logic()
+{
+	printf("Hey! there is master logic.\n");
+	return 0;
+}
 
 int main(int argc, char** argv)
 {
@@ -141,19 +185,20 @@ int main(int argc, char** argv)
 	int socket_id;
 	int port_id;
 	int lcore_id;
+	int lcore_count;
 
 	struct rte_eth_conf eth_conf;
 	struct rte_mempool* mpool;
 
 	port_id = 0;
-	nb_rx_queue = 4;
-	socket_id = rte_socket_id();
 	printf("Hello Potato!\n");
 	ret = rte_eal_init(argc, argv);
 	if (ret < 0) {
 		rte_panic("Cannot init EAL\n");
 	}
-	printf("rte_lcore_count: %d\n", rte_lcore_count());
+	socket_id = rte_socket_id();
+	lcore_count =  rte_lcore_count();
+	printf("rte_lcore_count: %d\n", lcore_count);
 
 	/* 1. mem pool create */
 	mpool = rte_pktmbuf_pool_create("MBUF_POOL", 8192-1, 250,
@@ -165,6 +210,7 @@ int main(int argc, char** argv)
 	}
 
 	/* 2. Initialize Port. */
+	nb_rx_queue = lcore_count - 1;
 	eth_conf.rxmode.mq_mode = ETH_MQ_RX_RSS;
 	eth_conf.link_speeds = ETH_LINK_SPEED_1G;      
 	eth_conf.rxmode.max_rx_pkt_len = ETHER_MAX_LEN;
@@ -204,19 +250,28 @@ int main(int argc, char** argv)
 	}
 		
 	rte_eth_promiscuous_enable(port_id);
+
+	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+		if (lcore_init(lcore_id) < 0)
+			return -1;
+	}
 	printf("init done!\n");
 
-	signal(SIGINT, _sig_handle);
-	signal(SIGUSR1, _sig_handle);
 	/* call lcore_hello() on every slave lcore */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
-		rte_eal_remote_launch(lcore_hello, NULL, lcore_id);
+		rte_eal_remote_launch(lcore_loop, NULL, lcore_id);
 	}
 
-	/* call it on master lcore too */
-	lcore_hello(NULL);
-
+	/* call things on master lcore*/
+	signal(SIGINT, _sig_handle);
+	signal(SIGUSR1, _sig_handle);
+	master_logic();
 	rte_eal_mp_wait_lcore();
+
+	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+		lcore_destroy(lcore_id);
+	}
+
 	printf("ByeBye!\n");
 	return 0;
 }
