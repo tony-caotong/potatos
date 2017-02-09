@@ -22,6 +22,14 @@
 #include <rte_launch.h>
 
 struct priv{
+	uint8_t a;
+	uint8_t b;
+	uint8_t c;
+	uint8_t d;
+	uint8_t e;
+	uint8_t f;
+	uint8_t g;
+	uint8_t h;
 };
 
 struct share_block {
@@ -72,6 +80,28 @@ void binary_print(char* capital, char* buf, size_t length)
 	printf("\n");
 }
 
+/* NOTE: informations for priv data.
+	in struct rte_mbuf:
+	1. According to API description of func rte_pktmbuf_pool_create().
+	   priv_buf posit between struct rte_mbuf and data buffer.
+	2. buf->priv_size == buf->buf_addr - (buf + sizeof(*buf)).
+	3. the memory map like this:
+		.------------------------------------------------.
+		| rte_mbuf | priv buf |  *(1)  | pkt buf | *(2)  |
+		^----------^----------^--------^---------^-------^
+		a          b          c        d         e       f
+	    buf == a
+	    buf->buf_addr == c
+	    a + sizeof(struct rte_mbuf) == b
+	    b + buf->priv_size == c
+	    c + buf->data_off == d
+	    d + buf->data_len == e
+	    d + buf->data_len == e
+	    c + buf->buf_len == f
+
+	*(1) length is 128, when testing, and not sure what is used for.
+	*(2) not sure what is used for.
+*/
 void handle_mbuf(struct rte_mbuf* buf)
 {
 	char captial[32];
@@ -146,7 +176,8 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 
 		nb_rx = rte_eth_rx_burst(port_id, rx_queue_id, bufs, buf_size);
 		if (nb_rx <= 0) {
-			/* Just sleep 5 milliseconds as simple, actually epoll
+			/* TODO: 
+			Just sleep 5 milliseconds as simple, actually epoll
 			and interrupt should be used here.
 			*/
 			usleep(5000);
