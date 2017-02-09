@@ -146,6 +146,10 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 
 		nb_rx = rte_eth_rx_burst(port_id, rx_queue_id, bufs, buf_size);
 		if (nb_rx <= 0) {
+			/* Just sleep 5 milliseconds as simple, actually epoll
+			and interrupt should be used here.
+			*/
+			usleep(5000);
 			continue;
 		}
 		
@@ -174,6 +178,8 @@ static uint16_t callback(uint8_t port, uint16_t queue, struct rte_mbuf *pkts[],
 int master_logic()
 {
 	printf("Hey! there is master logic.\n");
+	while (!Quit)
+		usleep(5000);
 	return 0;
 }
 
