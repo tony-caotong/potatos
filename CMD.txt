@@ -5,3 +5,9 @@ insmod /potatos/lib/modules/3.10.0-514.6.1.el7.x86_64/extra/dpdk/igb_uio.ko
 #/potatos/share/dpdk/tools/dpdk-devbind.py -s
 /potatos/share/dpdk/tools/dpdk-devbind.py -b igb_uio eth1
 
+## command for dev bind without script tools
+modprobe uio
+insmod /potatos/lib/modules/3.10.0-514.6.1.el7.x86_64/extra/dpdk/igb_uio.ko 
+echo '0000:00:04.0' >  /sys/bus/pci/devices/0000\:00\:04.0/driver/unbind
+lspci -s 0000:00:04.0 -vv -nn |head -n1
+echo "1af4 1000" > /sys/bus/pci/drivers/igb_uio/new_id 

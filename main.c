@@ -89,7 +89,7 @@ void binary_print(char* capital, char* buf, size_t length)
 		.---------------------------------------------------.
 		| rte_mbuf | priv buf | headroom | pkt buf |  null  |
 		^----------^----------^----------^---------^--------^
-		a          b          c          d         e       f
+		a          b          c          d         e        f
 	    buf == a
 	    buf->buf_addr == c
 	    a + sizeof(struct rte_mbuf) == b
@@ -230,17 +230,25 @@ int main(int argc, char** argv)
 	struct rte_eth_conf eth_conf;
 	struct rte_mempool* mpool;
 
-	port_id = 0;
-	printf("Hello Potato!\n");
+	fprintf(stderr, "Welcome Potatos!\n");
+
+	/* 0. Initialize DPDK environment. */
 	ret = rte_eal_init(argc, argv);
 	if (ret < 0) {
 		rte_panic("Cannot init EAL\n");
 	}
+
+	/* 0.0 Initialize global values. */
 	socket_id = rte_socket_id();
 	lcore_count =  rte_lcore_count();
-	printf("rte_lcore_count: %d\n", lcore_count);
 
 	/* 1. mem pool create */
+
+	/* TODO:
+		1. Config Data Room size.
+		2. Check MTU configuration.
+	*/
+
 	/* Note:
 		n: n = (2^q - 1)
 
@@ -264,6 +272,8 @@ int main(int argc, char** argv)
 	}
 
 	/* 2. Initialize Port. */
+	/* TODO: deal with port_id and rx_queue */
+	port_id = 0;
 	nb_rx_queue = lcore_count - 1;
 	eth_conf.rxmode.mq_mode = ETH_MQ_RX_RSS;
 	eth_conf.link_speeds = ETH_LINK_SPEED_1G;      
@@ -297,38 +307,42 @@ int main(int argc, char** argv)
 #endif
 	}
 
+	/* 4. Initialize slave lcore things. */
+	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+		if (lcore_init(lcore_id) < 0)
+			return -1;
+	}
+	fprintf(stderr, "init done!\n");
+
+	/* 5.1 start ports. */
 	ret = rte_eth_dev_start(port_id);
 	if (ret < 0) {
 		perror("rte_dev_rx_queue_setup: ");
 		return -1;
 	}
-		
 	rte_eth_promiscuous_enable(port_id);
 
-	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
-		if (lcore_init(lcore_id) < 0)
-			return -1;
-	}
-	printf("init done!\n");
 
-	/* call lcore_hello() on every slave lcore */
+	/* 5.2 start slave lcores. */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		rte_eal_remote_launch(lcore_loop, NULL, lcore_id);
 	}
 
-	/* call things on master lcore*/
+	/* 5.3 start master lcores. */
 	signal(SIGINT, _sig_handle);
 	signal(SIGUSR1, _sig_handle);
 	master_logic();
+	/* 5.3.1 waiting for dead of slaves. */
 	rte_eal_mp_wait_lcore();
 
+	/* 6.1 release slave resources. */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		lcore_destroy(lcore_id);
 	}
+	/* 6.2 TODO: release master resources. */
+	/* 6.3 TODO: release global resources. */
 
-	/*TODO: release resources. */
-
-	printf("ByeBye!\n");
+	fprintf(stderr, "ByeBye!\n");
 	return 0;
 }
 
