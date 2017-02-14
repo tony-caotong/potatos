@@ -5,6 +5,9 @@
  *
  */
 
+#include <pkt.h>
+#include <PsDecode.h>
+
 #include "decoder.h"
 
 
