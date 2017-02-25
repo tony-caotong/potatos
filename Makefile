@@ -13,15 +13,17 @@ LDLIBS += -rpath=$(HALLY_ROOT)/dapprotocol/
 LDLIBS += -L$(RTE_SRCDIR) -lhally
 V += y
 
-#LIBHALLY=libhally.a
-#
-#$(APP): $(LIBHALLY)
-#
-#.PHONY: $(LIBHALLY)
-#$(LIBHALLY):
-#	make -f hally.mk
-#
-#clean:
-#	make -f hally.mk clean
+LIBHALLY= -lhally
+
+$(APP): $(LIBHALLY)
+clean: hallyclean
 
 include $(RTE_SDK)/mk/rte.extapp.mk
+
+$(LIBHALLY):
+	make  -C $(RTE_SRCDIR) -f hally.mk
+
+.PHONY: hallyclean
+hallyclean:
+	make -f $(RTE_SRCDIR)/hally.mk clean
+
