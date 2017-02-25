@@ -1,5 +1,5 @@
 include $(RTE_SDK)/mk/rte.vars.mk
-APP=potato
+APP=potatos
 SRCS-y := main.c
 CFLAGS += -Wall
 CFLAGS += -g

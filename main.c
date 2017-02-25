@@ -21,16 +21,8 @@
 #include <rte_errno.h>
 #include <rte_launch.h>
 
-struct priv{
-	uint8_t a;
-	uint8_t b;
-	uint8_t c;
-	uint8_t d;
-	uint8_t e;
-	uint8_t f;
-	uint8_t g;
-	uint8_t h;
-};
+#include "decoder.h"
+#include "priv.h"
 
 struct share_block {
 	sem_t sem_monitor;
@@ -104,14 +96,16 @@ void binary_print(char* capital, char* buf, size_t length)
 	"f - c" was a parameter passed to rte_pktmbuf_pool_create()
 	MUST: "f - d" >= 2KB
 
+	*** headroom size is fixed to 128 bytes (RTE_PKTMBUF_HEADROOM)
+
 */
 void handle_mbuf(struct rte_mbuf* buf)
 {
-	char captial[32];
-	char* p = buf->buf_addr + buf->data_off;
-	int l = buf->pkt_len;
+	char* p __attribute__((unused)) = buf->buf_addr + buf->data_off;
+	int l __attribute__((unused)) = buf->pkt_len;
 
 #if 0
+	char captial[32];
 	snprintf(captial, sizeof(captial), "packet length: %d", l);
 	if (l > 1024) {
 		printf("%s\n", captial);
@@ -226,6 +220,7 @@ int main(int argc, char** argv)
 	int port_id;
 	int lcore_id;
 	int lcore_count;
+	int buf_size;
 
 	struct rte_eth_conf eth_conf;
 	struct rte_mempool* mpool;
@@ -248,6 +243,7 @@ int main(int argc, char** argv)
 		1. Config Data Room size.
 		2. Check MTU configuration.
 	*/
+	buf_size = RTE_MBUF_DEFAULT_BUF_SIZE;	
 
 	/* Note:
 		n: n = (2^q - 1)
@@ -264,12 +260,17 @@ int main(int argc, char** argv)
 		3 * 127 = 381 < 512
 	*/
 	mpool = rte_pktmbuf_pool_create("MBUF_POOL", (1<<14)-1, 3*127,
-		sizeof(struct priv), RTE_MBUF_DEFAULT_BUF_SIZE, socket_id);
+		sizeof(struct priv), buf_size, socket_id);
 	if (NULL == mpool) {
 		printf("rte_pktmbuf_pool_create: %s\n",
 			rte_strerror(rte_errno));
 		return -1;
 	}
+
+#if 0
+	int data_room_size = rte_pktmbuf_data_room_size(mpool);
+	printf("data_room_size: %d\n", data_room_size);
+#endif
 
 	/* 2. Initialize Port. */
 	/* TODO: deal with port_id and rx_queue */
