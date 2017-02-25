@@ -7,16 +7,19 @@
 
 #include <pkt.h>
 #include <PsDecode.h>
+#include <TcpAnalyze.h>
 #include <PrETHERNET.h>
+#include <PrTCP.h>
 
 #include "decoder.h"
 #include "priv.h"
 
 typedef struct decoder_t {
 	PsDecode* hl_dec;
-
+	TcpAnalyze* hl_tcp;
 } DECODER;
 
+/* unused, just for compiling of daplibs. */
 void *__lgwr__handle = NULL;
 void *__timer_mgr_handle = NULL;
 
@@ -31,19 +34,28 @@ int hally_hdrlen()
 DECODER* init_decoder()
 {
 	PsDecode* hl_dec;
+	TcpAnalyze* hl_tcp;
 	DECODER* dec;
 
 	hl_dec = new PsDecode();
 	if (hl_dec == NULL) {
 		return NULL;
 	}
+
+	hl_tcp = new TcpAnalyze(NULL);
+	if (hl_tcp == NULL) {
+		delete hl_dec;
+		return NULL;
+	}
 	
 	dec = (DECODER*)malloc(sizeof(DECODER));
 	if (dec == NULL) {
+		delete hl_tcp;
 		delete hl_dec;
 		return NULL;
 	}
 	dec->hl_dec = hl_dec;
+	dec->hl_tcp = hl_tcp;
 	return dec;
 }
 
@@ -51,6 +63,7 @@ int decode_pkt(DECODER* dec, void* pkt, void* buf, int len)
 {
 	PsResult* hl_res;
 	PsDecode* hl_dec;
+	TcpAnalyze* hl_tcp;
 	pkt_hdr* hl_hdr;
 	int i;
 
@@ -73,6 +86,7 @@ int decode_pkt(DECODER* dec, void* pkt, void* buf, int len)
 
 	/* We presume hl_dec must be valid. */
 	hl_dec = dec->hl_dec;
+	hl_tcp = dec->hl_tcp;
 	hl_res = hl_dec->Decode(hl_hdr, 0);
 
 	for (i = 0; i < SS_SIZE; i++) {
@@ -98,6 +112,17 @@ int decode_pkt(DECODER* dec, void* pkt, void* buf, int len)
 			printf("\n");
 			printf(" >>>> ether protocol: %x\n", ep->m_nProtocol);
 			printf(" >>>> ether vlan_id: %d\n", ep->m_nVLanID);
+		} else if (i == SS_TCP) {
+			PrTCP *tcp = dynamic_cast<PrTCP*>(p);
+			if (tcp && tcp->m_nPayloadLen > 0) {
+				hl_tcp->Analyze(hl_res, tcp);
+				pkt_hdr *ph;
+				while ((ph = hl_tcp->Split()) != NULL) {
+						printf(">>>>>>>>>>>>>>>>>>>>"
+							"one ordered pkt.\n");
+						free(ph);
+				}
+			}
 		}
 	}
 	return 0;
@@ -109,7 +134,9 @@ void destory_decoder(DECODER* dec)
 		return;
 	}
 	delete dec->hl_dec;
-	dec->hl_dec= NULL;
+	dec->hl_dec = NULL;
+	delete dec->hl_tcp;
+	dec->hl_tcp = NULL;
 	free(dec);
 }
 
