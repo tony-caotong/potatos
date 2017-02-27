@@ -1,29 +1,45 @@
 include $(RTE_SDK)/mk/rte.vars.mk
-
-HALLY_ROOT = $(RTE_SRCDIR)/sdk/hally_root/
-APP = potatos
-SRCS-y := main.c
-CFLAGS += -Wall
-CFLAGS += -g
-LDFLAGS += -lstdc++
-LDLIBS += -L$(HALLY_ROOT)/dapcomm/ -ldapcomm
-LDLIBS += -rpath=$(HALLY_ROOT)/dapcomm/
-LDLIBS += -L$(HALLY_ROOT)/dapprotocol/ -ldapprotocol
-LDLIBS += -rpath=$(HALLY_ROOT)/dapprotocol/
-LDLIBS += -L$(RTE_SRCDIR) -lhally
 V += y
 
-LIBHALLY= -lhally
+DAP_ROOT = $(RTE_SRCDIR)/sdk/dap_root/
 
-$(APP): $(LIBHALLY)
-clean: hallyclean
+APP = hally
+LIBDAP = libdap.a
 
+SRCS-y := main.c
+LIBDAP_O = decoder.o
+
+CFLAGS += -Wall
+CFLAGS += -g
+
+CXXFLAGS += -I $(DAP_ROOT)dapcomm/lch/util/
+CXXFLAGS += -I $(DAP_ROOT)dapcomm/lch/aplog/
+CXXFLAGS += -I $(DAP_ROOT)dapcomm/lch/mm/
+CXXFLAGS += -I $(DAP_ROOT)dapprotocol/psdecode/base/
+CXXFLAGS += -I $(DAP_ROOT)dapprotocol/psdecode/protocol/
+CXXFLAGS += -I $(DAP_ROOT)dapprotocol/psdecode/decoder/
+
+LDFLAGS += -lstdc++
+LDLIBS += -L$(DAP_ROOT)/dapcomm/ -ldapcomm
+LDLIBS += -rpath=$(DAP_ROOT)/dapcomm/
+LDLIBS += -L$(DAP_ROOT)/dapprotocol/ -ldapprotocol
+LDLIBS += -rpath=$(DAP_ROOT)/dapprotocol/
+LDLIBS += -L$(RTE_SRCDIR) -ldap
+
+
+$(APP): $(LIBDAP)
+clean: dapclean
+
+# This include Must be in this line before any custom rules.
 include $(RTE_SDK)/mk/rte.extapp.mk
 
-$(LIBHALLY):
-	make  -C $(RTE_SRCDIR) -f hally.mk
+$(LIBDAP_O): %.o : %.cpp
+	$(CXX) -c $(CXXFLAGS) $(CFLAGS) $< -o $@
 
-.PHONY: hallyclean
-hallyclean:
-	make -f $(RTE_SRCDIR)/hally.mk clean
+$(LIBDAP): $(LIBDAP_O)
+	ar rc $@ $?
+	ranlib $@
 
+.PHONY: dapclean
+dapclean:
+	rm -f $(LIBDAP) $(LIBDAP_O)

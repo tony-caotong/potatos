@@ -1,8 +1,5 @@
 # Thing before others
-  Actually, it is not potato, it is masked potato salad. But this name is too
-  long. so just call it potato. But only one potato is such alone, so let it
-  called potatos finally.
-  However I feel it great and potatos will feel happy. What do you think?
+Clone from potatos, named hally.
 
 # Environment
   * OS: CentOS 7
@@ -13,6 +10,9 @@
       * dpdk-16.07.2
 
 # Logs
+### v20170227-001
+formally, name Changed to hally. add tutorial, change path/name things.
+
 ### v20170210-001
 struct about rte_mbuf and parameter values about mempool create, were described
 as commands in codes.
