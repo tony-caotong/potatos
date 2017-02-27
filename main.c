@@ -1,6 +1,6 @@
 /**
  * 	Masked potato salad.
- *		by Cao tong <tony_caotong@gmail.com>
+ *		by Cao tong <tony.caotong@gmail.com>
  *		@ 2017-02-07
  *
  */
@@ -103,7 +103,7 @@ void handle_mbuf(DECODER* dec, struct rte_mbuf* buf)
 {
 	char captial[32];
 	char* p = buf->buf_addr + buf->data_off;
-	/* no doubt data_off must bigger than hally_hdrlen(). */
+	/* no doubt: data_off must bigger than hally_hdrlen(). */
 	char* pkt = buf->buf_addr + (buf->data_off - hally_hdrlen());
 	int l = buf->data_len;
 	struct priv* priv = (void*)buf + sizeof(struct rte_mbuf);

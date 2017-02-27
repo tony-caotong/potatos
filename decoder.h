@@ -1,6 +1,6 @@
 /**
  * 	Masked potato salad.
- *		by Cao tong <tony_caotong@gmail.com>
+ *		by Cao tong <tony.caotong@gmail.com>
  *		@ 2017-02-10
  *
  */
