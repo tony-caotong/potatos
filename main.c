@@ -197,6 +197,10 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 		/* handle each pkt. */
 		for (i = 0; i < nb_rx; i++) {
 			buf = bufs[i];
+#if 0
+			printf("pkt from [core %u] [port %u] [queue %u]\n",
+				lcore_id, port_id, rx_queue_id);
+#endif
 			handle_mbuf(dec, buf);
 			rte_pktmbuf_free(buf);
 		}
@@ -248,6 +252,9 @@ int main(int argc, char** argv)
 	if (ret < 0) {
 		rte_panic("Cannot init EAL\n");
 	}
+	/* Not only here, compile configurtions also needed. */
+	rte_openlog_stream(NULL);
+	rte_set_log_level(8);
 
 	/* 0.0 Initialize global values. */
 	socket_id = rte_socket_id();
@@ -296,6 +303,7 @@ int main(int argc, char** argv)
 	/* TODO: deal with port_id and rx_queue */
 	port_id = 0;
 	nb_rx_queue = lcore_count - 1;
+	memset(&eth_conf, 0, sizeof(eth_conf));
 	eth_conf.rxmode.mq_mode = ETH_MQ_RX_RSS;
 	eth_conf.link_speeds = ETH_LINK_SPEED_1G;      
 	eth_conf.rxmode.max_rx_pkt_len = ETHER_MAX_LEN;
@@ -308,7 +316,9 @@ int main(int argc, char** argv)
 	}
 	
 	/* 3. Initialize receive queue. */
-	uint16_t nb_rx_desc = 16;
+	/* With 82599ES it must bigger than 32. */
+	/* XXX: when nb_rx_desc == 32, 82599ES pkt recving will be blocked. */
+	uint16_t nb_rx_desc = 64;
 	struct rte_eth_rxconf* rx_conf = NULL;
 	for (i = 0; i < nb_rx_queue; i++) {
 		ret = rte_eth_rx_queue_setup(port_id, i, nb_rx_desc, socket_id,

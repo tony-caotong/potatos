@@ -10,6 +10,38 @@ Clone from potatos, named hally.
       * dpdk-16.07.2
 
 # Logs
+### v20170228-002
+Useful configurations of DPDK compiling.
+	[root]# diff .config .config.orig 
+	106c106
+	< CONFIG_RTE_LOG_LEVEL=RTE_LOG_DEBUG
+	---
+	> CONFIG_RTE_LOG_LEVEL=RTE_LOG_INFO
+	122c122
+	< CONFIG_RTE_LIBRTE_ETHDEV_DEBUG=y
+	---
+	> CONFIG_RTE_LIBRTE_ETHDEV_DEBUG=n
+	148,149c148,149
+	< CONFIG_RTE_LIBRTE_IXGBE_DEBUG_INIT=y
+	< CONFIG_RTE_LIBRTE_IXGBE_DEBUG_RX=y
+	---
+	> CONFIG_RTE_LIBRTE_IXGBE_DEBUG_INIT=n
+	> CONFIG_RTE_LIBRTE_IXGBE_DEBUG_RX=n
+	152c152
+	< CONFIG_RTE_LIBRTE_IXGBE_DEBUG_DRIVER=y
+	---
+	> CONFIG_RTE_LIBRTE_IXGBE_DEBUG_DRIVER=n
+	374,375c374,375
+	< CONFIG_RTE_LIBRTE_KNI=n
+	< CONFIG_RTE_KNI_KMOD=n
+	---
+	> CONFIG_RTE_LIBRTE_KNI=y
+	> CONFIG_RTE_KNI_KMOD=y
+	[root]# 
+### v20170228-001
+Testing with 'Intel Corporation 82599ES 10-Gigabit SFI/SFP+ Network 
+Connection (rev 01)', and fixed some errors.
+
 ### v20170227-001
 formally, name Changed to hally. add tutorial, change path/name things.
 
