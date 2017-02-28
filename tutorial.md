@@ -183,4 +183,7 @@ yum install flex
   >     make
 
 #### 运行demo程序
-  >     ./build/hally -l7,6,5,4,3,2,1
+  >     # 启动
+  >     ./build/hally -l7,6,5,4,3,2,1  
+  >     # 状态请求
+  >     kill -USR1 `pidof hally`
