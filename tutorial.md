@@ -10,8 +10,8 @@ Date: 2017-02-27
 
 ## 前期内容
 DPI Development Kit的核心目标是：保持其松散耦合的特点，在面对不同的应用场景时，能够  
-快速梳理业务逻辑，完成快速开发上线。并保持易维护，高性能的特效。  
-将业务开发团队与基础设施团队有效分离，保持DPI基础设施的常规演进与开发迭代。
+快速梳理业务逻辑，完成快速开发上线。并保持易维护，高性能的特性。  
+将业务开发与基础设施有效分层，保持DPI基础设施的常规演进与开发迭代。
 
 ### 方向目标
   * 合理的功能区分层与功能块抽象。
@@ -48,15 +48,15 @@ DPDK全称Data Plane Development Kit。是Intel在数据时代专为高性能海
   * 其他
 
 ### DPDK相关资料
-  * 官方网站：http://dpdk.org
-  * 文档：文档很详细深度也很深，只看官方文档基本就够了，但是对基础知识的要求稍微  
+  * __官方网站：__http://dpdk.org
+  * __文档：__文档很详细深度也很深，只看官方文档基本就够了，但是对基础知识的要求稍微  
   高一些。http://dpdk.org/doc/guides/  
-  * API：API都是从源码自动导出的，与看头文件没有区别。http://dpdk.org/doc/api/  
-  * 源码: 没有比源码更好的文档了，使用中遇见任何不理解的地方个人建议都应该去读它的  
+  * __API：__API都是从源码自动导出的，与看头文件没有区别。http://dpdk.org/doc/api/  
+  * __源码: __没有比源码更好的文档了，使用中遇见任何不理解的地方个人建议都应该去读它的  
   源码。此外，源码中有大量丰富的例子，都必须读。 http://dpdk.org/download  
-  * 中文资料：全文讲内部机制与知识背景，对接口的使用没有指导意义，但是可以了解内容原理。
+  * __中文资料：__全文讲内部机制与知识背景，对接口的使用没有指导意义，但是可以了解内容原理。
   官方文档中也包含了其大部分内容。[<<深入浅出dpdk>>](https://www.amazon.cn/dp/B01FQ9SMZO/ref=sr_1_1?ie=UTF8&qid=1488189066&sr=8-1&keywords=%E6%B7%B1%E5%85%A5%E6%B5%85%E5%87%BAdpdk)
-  * 我的笔记：都是用来自己看的，可读性比较差，可以适当参考，也许有错误，欢迎指出。
+  * __我的笔记：__都是用来自己看的，可读性比较差，可以适当参考，也许有错误，欢迎指出。
   http://www.cnblogs.com/hugetong/category/890194.html
 
 ### 技术选型
@@ -90,6 +90,8 @@ DPDK全称Data Plane Development Kit。是Intel在数据时代专为高性能海
   >     default_hugepagesz=1G hugepagesz=1G hugepages=8  
   > \# 设置挂载点  
   >     mkdir /mnt/huge
+  > \# 添加以下内容至文件/etc/fstab
+  >     nodev   /mnt/huge  hugetlbfs  pagesize=1GB  0 0
   >
   * 设置孤立核心
   > \# 调整内核参数  
@@ -127,8 +129,8 @@ DPDK全称Data Plane Development Kit。是Intel在数据时代专为高性能海
   >>     #! /bin/bash
   >>     
   >>     modprobe uio  
-  >>     insmod $DPDK_ROOT/lib/modules/\`uname -r\`/extra/dpdk/igb_uio.ko
-  >>     $DPDK_ROOT/sbin/dpdk-devbind -b igb_uio enp1s0f1  
+  >>     insmod /dpdk/lib/modules/\`uname -r\`/extra/dpdk/igb_uio.ko
+  >>     /dpdk/sbin/dpdk-devbind -b igb_uio enp1s0f1  
   >>
 
   > \# 添加进rc.local  
@@ -164,9 +166,8 @@ demo主要用于演示与功能验证，故快速集成了dap代码中的decoder
   >     yum install gcc-c++
   >     yum install curl-devel
   >     yum install libevent-devel
-  yum install bison
-yum install flex
-
+  >     yum install bison
+  >     yum install flex
 
   * 编译
   >     cd dapcomm/
@@ -187,3 +188,8 @@ yum install flex
   >     ./build/hally -l7,6,5,4,3,2,1  
   >     # 状态请求
   >     kill -USR1 `pidof hally`
+
+
+     
+***
+The End
