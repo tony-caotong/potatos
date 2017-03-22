@@ -1,6 +1,6 @@
 /**
  * 	Masked potato salad.
- *		by Cao tong <tony_caotong@gmail.com>
+ *		by Cao tong <tony.caotong@gmail.com>
  *		@ 2017-02-07
  *
  */
@@ -24,12 +24,15 @@
 #include "decoder.h"
 #include "priv.h"
 
+#define P_PKT_SNAPLEN 8192
+
 struct share_block {
 	sem_t sem_monitor;
 } __attribute__((__packed__));
 
 static int Quit = 0;
 static struct share_block Shb[RTE_MAX_LCORE];
+static int Pktoff = 0;
 
 void _sig_handle(int sig)
 {
@@ -101,10 +104,20 @@ void binary_print(char* capital, char* buf, size_t length)
 */
 void handle_mbuf(struct rte_mbuf* buf)
 {
-	char* p __attribute__((unused)) = buf->buf_addr + buf->data_off;
-	int l __attribute__((unused)) = buf->pkt_len;
+	struct pkt* pkt;
+	struct priv* priv;
+	char* raw;
+	int len;
 
-#if 0
+	priv = (void*)buf + sizeof(struct rte_mbuf);
+	pkt = buf->buf_addr + Pktoff;
+	raw = rte_pktmbuf_mtod(buf, char*);
+	len = buf->data_len;
+
+#if 1
+	char* p = buf->buf_addr + buf->data_off;
+	int l = buf->pkt_len;
+
 	char captial[32];
 	snprintf(captial, sizeof(captial), "packet length: %d", l);
 	if (l > 1024) {
@@ -112,6 +125,9 @@ void handle_mbuf(struct rte_mbuf* buf)
 	}
 	binary_print(captial, p, l);
 #endif
+	if (decode_pkt(pkt, raw, len, priv) < 0) {
+		;
+	}
 }
 
 int lcore_init(uint32_t lcore_id)
@@ -221,6 +237,8 @@ int main(int argc, char** argv)
 	int lcore_id;
 	int lcore_count;
 	int buf_size;
+	int pkthdr_size;
+	int priv_len;
 
 	struct rte_eth_conf eth_conf;
 	struct rte_mempool* mpool;
@@ -243,7 +261,13 @@ int main(int argc, char** argv)
 		1. Config Data Room size.
 		2. Check MTU configuration.
 	*/
-	buf_size = RTE_MBUF_DEFAULT_BUF_SIZE;	
+	buf_size = RTE_PKTMBUF_HEADROOM + P_PKT_SNAPLEN;
+	pkthdr_size = sizeof(struct pkt);
+	Pktoff = RTE_PKTMBUF_HEADROOM - pkthdr_size;
+	priv_len = sizeof(struct priv);
+	if (Pktoff < 0) {
+		priv_len += -Pktoff;
+	}
 
 	/* Note:
 		n: n = (2^q - 1)
@@ -260,7 +284,7 @@ int main(int argc, char** argv)
 		3 * 127 = 381 < 512
 	*/
 	mpool = rte_pktmbuf_pool_create("MBUF_POOL", (1<<14)-1, 3*127,
-		sizeof(struct priv), buf_size, socket_id);
+		priv_len, buf_size, socket_id);
 	if (NULL == mpool) {
 		printf("rte_pktmbuf_pool_create: %s\n",
 			rte_strerror(rte_errno));
@@ -288,7 +312,7 @@ int main(int argc, char** argv)
 	}
 	
 	/* 3. Initialize receive queue. */
-	uint16_t nb_rx_desc = 16;
+	uint16_t nb_rx_desc = 32;
 	struct rte_eth_rxconf* rx_conf = NULL;
 	for (i = 0; i < nb_rx_queue; i++) {
 		ret = rte_eth_rx_queue_setup(port_id, i, nb_rx_desc, socket_id,

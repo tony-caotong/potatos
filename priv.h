@@ -1,6 +1,8 @@
 #ifndef __PRIV_H__
 #define __PRIV_H__
 
+#include <stdint.h>
+
 struct priv{
 	uint8_t a;
 	uint8_t b;
