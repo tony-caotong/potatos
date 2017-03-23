@@ -300,6 +300,7 @@ int main(int argc, char** argv)
 	/* TODO: deal with port_id and rx_queue */
 	port_id = 0;
 	nb_rx_queue = lcore_count - 1;
+	memset(&eth_conf, 0, sizeof(eth_conf));
 	eth_conf.rxmode.mq_mode = ETH_MQ_RX_RSS;
 	eth_conf.link_speeds = ETH_LINK_SPEED_1G;      
 	eth_conf.rxmode.max_rx_pkt_len = ETHER_MAX_LEN;
@@ -332,6 +333,9 @@ int main(int argc, char** argv)
 #endif
 	}
 
+	/* 3.1. Set packet filter. */
+	rte_lpm_create(port_id, );
+
 	/* 4. Initialize slave lcore things. */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		if (lcore_init(lcore_id) < 0)
@@ -346,7 +350,6 @@ int main(int argc, char** argv)
 		return -1;
 	}
 	rte_eth_promiscuous_enable(port_id);
-
 
 	/* 5.2 start slave lcores. */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
@@ -365,6 +368,7 @@ int main(int argc, char** argv)
 		lcore_destroy(lcore_id);
 	}
 	/* 6.2 TODO: release master resources. */
+	rte_lpm_destory();
 	/* 6.3 TODO: release global resources. */
 
 	fprintf(stderr, "ByeBye!\n");
