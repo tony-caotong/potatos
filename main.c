@@ -23,6 +23,7 @@
 
 #include "decoder.h"
 #include "priv.h"
+#include "hw_features.h"
 
 #define P_PKT_SNAPLEN 8192
 
@@ -314,6 +315,7 @@ int main(int argc, char** argv)
 	
 	/* 3. Initialize receive queue. */
 	uint16_t nb_rx_desc = 32;
+	int is_hw_parse = is_hw_parse_ptype_ipv4(port_id);
 	struct rte_eth_rxconf* rx_conf = NULL;
 	for (i = 0; i < nb_rx_queue; i++) {
 		ret = rte_eth_rx_queue_setup(port_id, i, nb_rx_desc, socket_id,
@@ -322,19 +324,18 @@ int main(int argc, char** argv)
 			perror("rte_dev_rx_queue_setup: ");
 			return -1;
 		}
-#if 0
-		void* cb_handler;
-		cb_handler = rte_eth_add_rx_callback(port_id, i,
-			callback, NULL);
-		if (!cb_handler) {
-			perror("rte_eth_add_rx_callback: ");
-			return -1;
+		if (!is_hw_parse) {
+			void* cb_handler = rte_eth_add_rx_callback(port_id, i,
+				sw_ptype_parse_callback, NULL);
+			if (!cb_handler) {
+				perror("rte_eth_add_rx_callback: ");
+				return -1;
+			}
 		}
-#endif
 	}
 
 	/* 3.1. Set packet filter. */
-	rte_lpm_create(port_id, );
+//	rte_lpm_create(port_id, );
 
 	/* 4. Initialize slave lcore things. */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
@@ -368,7 +369,7 @@ int main(int argc, char** argv)
 		lcore_destroy(lcore_id);
 	}
 	/* 6.2 TODO: release master resources. */
-	rte_lpm_destory();
+//	rte_lpm_destory();
 	/* 6.3 TODO: release global resources. */
 
 	fprintf(stderr, "ByeBye!\n");
