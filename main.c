@@ -114,6 +114,18 @@ void handle_mbuf(struct rte_mbuf* buf)
 	pkt = buf->buf_addr + Pktoff;
 	raw = rte_pktmbuf_mtod(buf, char*);
 	len = buf->data_len;
+            
+#if 1
+	printf("mbuf->packet_type: %08x\n", buf->packet_type);
+	printf("mbuf->l2_type: %01x\n", buf->l2_type);
+	printf("mbuf->l3_type: %01x\n", buf->l3_type);
+	printf("mbuf->l4_type: %01x\n", buf->l4_type);
+	printf("mbuf->tun_type: %01x\n", buf->tun_type);
+	printf("mbuf->inner_l2_type: %01x\n", buf->inner_l2_type);
+	printf("mbuf->inner_l3_type: %01x\n", buf->inner_l3_type);
+	printf("mbuf->inner_l4_type: %01x\n", buf->inner_l4_type);
+	printf("mbuf->ol_flags: %016lx\n", buf->ol_flags);
+#endif
 
 #if 1
 	char* p = buf->buf_addr + buf->data_off;
@@ -315,7 +327,12 @@ int main(int argc, char** argv)
 	
 	/* 3. Initialize receive queue. */
 	uint16_t nb_rx_desc = 32;
-	int is_hw_parse = is_hw_parse_ptype_ipv4(port_id);
+	//int is_hw_parse = is_hw_parse_ptype_ipv4(port_id);
+	int is_hw_parse = 0;
+	if (is_hw_parse)
+		printf("HW parse is supporting.\n");
+	else
+		printf("HW parse is not supporting. enable SW parse.\n");
 	struct rte_eth_rxconf* rx_conf = NULL;
 	for (i = 0; i < nb_rx_queue; i++) {
 		ret = rte_eth_rx_queue_setup(port_id, i, nb_rx_desc, socket_id,

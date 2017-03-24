@@ -14,12 +14,15 @@
 
 static inline void sw_ptype_parse_l4(struct rte_mbuf *m);
 
+/* It is just use for guess, as HW could be not supported check. --!
+ * */
 int is_hw_parse_ptype_ipv4(int portid)
 {
 	int i, ret;
 	bool ptype_l3_ipv4 = false;
 	uint32_t ptype_mask = RTE_PTYPE_L3_MASK;
 
+	/* if 0: may be it's just not support checking, but support parsing. */
 	ret = rte_eth_dev_get_supported_ptypes(portid, ptype_mask, NULL, 0);
 	if (ret <= 0)
 		return false;
@@ -63,15 +66,17 @@ static inline void sw_ptype_parse_l4(struct rte_mbuf *m)
 
 	eh = rte_pktmbuf_mtod(m, struct ether_hdr *);
 	ether_type = eh->ether_type;
-	p = eh++;
+	packet_type |= RTE_PTYPE_L2_ETHER;
+	p = eh + 1;
 
+	printf("sw_ptype_parse_l4\n");
 	/* deal with just 2 vlans. */
 	int i = 0;
-	for (;i<2 && ether_type != rte_cpu_to_be_16(ETHER_TYPE_VLAN); i++) {
+	for (;i<2 && ether_type == rte_cpu_to_be_16(ETHER_TYPE_VLAN); i++) {
 		struct vlan_hdr *vh = p;
 		ether_type = vh->eth_proto;
 		m->ol_flags |= PKT_RX_VLAN_PKT;
-		p = vh++;
+		p = vh + 1;
 	}
 
 	if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_IPv4)) {
