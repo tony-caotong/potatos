@@ -13,6 +13,9 @@
       * dpdk-16.07.2
 
 # Logs
+### v20170327
+supporting ipv4 filter(black list and white list) implemented by two LPMs.
+
 ### v20170210-001
 struct about rte_mbuf and parameter values about mempool create, were described
 as commands in codes.
