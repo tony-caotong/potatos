@@ -20,10 +20,13 @@
 #include <rte_mbuf.h>
 #include <rte_errno.h>
 #include <rte_launch.h>
+#include <rte_ip.h>
 
 #include "decoder.h"
 #include "priv.h"
 #include "hw_features.h"
+#include "filter.h"
+#include "debug.h"
 
 #define P_PKT_SNAPLEN 8192
 
@@ -34,6 +37,15 @@ struct share_block {
 static int Quit = 0;
 static struct share_block Shb[RTE_MAX_LCORE];
 static int Pktoff = 0;
+
+struct filter_ipv4_rule filter_rules[] = {
+	{IPv4(10,1,0,0), 16, FILTER_DEFAULT_PASS},
+	{IPv4(10,2,0,0), 24, FILTER_DEFAULT_PASS},
+	{IPv4(10,3,0,0), 24, FILTER_DEFAULT_PASS},
+	{IPv4(10,1,1,0), 24, FILTER_DEFAULT_DROP},
+	{IPv4(10,2,2,0), 16, FILTER_DEFAULT_DROP},
+	{IPv4(10,0,3,0), 24, FILTER_DEFAULT_DROP}
+};
 
 void _sig_handle(int sig)
 {
@@ -58,7 +70,7 @@ void _sig_handle(int sig)
 	}
 }
 
-void binary_print(char* capital, char* buf, size_t length)
+void debug_binary_print(char* capital, char* buf, size_t length)
 {
 	int i = 0;
 	
@@ -103,7 +115,7 @@ void binary_print(char* capital, char* buf, size_t length)
 	*** headroom size is fixed to 128 bytes (RTE_PKTMBUF_HEADROOM)
 
 */
-void handle_mbuf(struct rte_mbuf* buf)
+void handle_mbuf(struct rte_mbuf* buf, uint32_t sockid)
 {
 	struct pkt* pkt;
 	struct priv* priv;
@@ -114,30 +126,43 @@ void handle_mbuf(struct rte_mbuf* buf)
 	pkt = buf->buf_addr + Pktoff;
 	raw = rte_pktmbuf_mtod(buf, char*);
 	len = buf->data_len;
-            
-#if 1
-	printf("mbuf->packet_type: %08x\n", buf->packet_type);
-	printf("mbuf->l2_type: %01x\n", buf->l2_type);
-	printf("mbuf->l3_type: %01x\n", buf->l3_type);
-	printf("mbuf->l4_type: %01x\n", buf->l4_type);
-	printf("mbuf->tun_type: %01x\n", buf->tun_type);
-	printf("mbuf->inner_l2_type: %01x\n", buf->inner_l2_type);
-	printf("mbuf->inner_l3_type: %01x\n", buf->inner_l3_type);
-	printf("mbuf->inner_l4_type: %01x\n", buf->inner_l4_type);
-	printf("mbuf->ol_flags: %016lx\n", buf->ol_flags);
-#endif
 
-#if 1
-	char* p = buf->buf_addr + buf->data_off;
-	int l = buf->pkt_len;
+	/* 1. counters and staters. */
+	// TODO
 
-	char captial[32];
-	snprintf(captial, sizeof(captial), "packet length: %d", l);
-	if (l > 1024) {
-		printf("%s\n", captial);
+	/* 2. filters. */
+	if (RTE_ETH_IS_IPV4_HDR(buf->packet_type)) {
+		void* p = raw + sizeof(struct ether_hdr);
+		struct iphdr* iph = p;
+
+		/* skip vlans. */
+		if (IS_HW_VLAN_PKT(buf->ol_flags)) {
+			int i;
+			uint16_t ether_type = ETHER_TYPE_VLAN;
+
+			for (i = 0; i < MAX_VLAN_EMBED && ether_type == 
+				rte_cpu_to_be_16(ETHER_TYPE_VLAN); i++) {
+				struct vlan_hdr *vh = p;
+				ether_type = vh->eth_proto;
+				p = vh + 1;
+			}
+		}
+
+		if (!is_filter_ipv4_pass(iph, sockid)) {
+			/* ATTENTION: this pack was droped. */
+			printf("ATTENTION: this pack was droped.\n");
+			return;
+		}
+		/* BTW: assign predecode values. */
+		// TODO:
+
+	} else if (RTE_ETH_IS_IPV6_HDR(buf->packet_type)) {
+		;
+	} else {
+		;
 	}
-	binary_print(captial, p, l);
-#endif
+
+	/* 3. decoders. */
 	if (decode_pkt(pkt, raw, len, priv) < 0) {
 		;
 	}
@@ -185,6 +210,14 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 	buf_size = 16;
 	bufs = malloc(buf_size * sizeof(struct rte_mbuf*));
 
+/*Temporary codes here, */
+#if 1
+	uint32_t socket_id = rte_socket_id();
+	int r = filter_init(filter_rules, sizeof(filter_rules), socket_id);
+	if (r < 0)
+		printf("Errors. filter_init()\n");
+#endif
+
 	rx_sum = 0;
 	while (!Quit) {
 #if 0
@@ -213,7 +246,8 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 		/* handle each pkt. */
 		for (i = 0; i < nb_rx; i++) {
 			buf = bufs[i];
-			handle_mbuf(buf);
+			debug_print_mbuf_infos(buf);
+			handle_mbuf(buf, socket_id);
 			rte_pktmbuf_free(buf);
 		}
 
@@ -222,6 +256,7 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 	}
 	printf("Bye from [core %u] [port %u] [queue %u]\n",
 		lcore_id, port_id, rx_queue_id);
+	filter_destory(socket_id);
 	return 0;
 }
 
@@ -327,7 +362,7 @@ int main(int argc, char** argv)
 	
 	/* 3. Initialize receive queue. */
 	uint16_t nb_rx_desc = 32;
-	//int is_hw_parse = is_hw_parse_ptype_ipv4(port_id);
+	//TODO int is_hw_parse = is_hw_parse_ptype_ipv4(port_id);
 	int is_hw_parse = 0;
 	if (is_hw_parse)
 		printf("HW parse is supporting.\n");

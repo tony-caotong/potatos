@@ -69,10 +69,10 @@ static inline void sw_ptype_parse_l4(struct rte_mbuf *m)
 	packet_type |= RTE_PTYPE_L2_ETHER;
 	p = eh + 1;
 
-	printf("sw_ptype_parse_l4\n");
 	/* deal with just 2 vlans. */
-	int i = 0;
-	for (;i<2 && ether_type == rte_cpu_to_be_16(ETHER_TYPE_VLAN); i++) {
+	int i;
+	for (i = 0; i < MAX_VLAN_EMBED && ether_type 
+			== rte_cpu_to_be_16(ETHER_TYPE_VLAN); i++) {
 		struct vlan_hdr *vh = p;
 		ether_type = vh->eth_proto;
 		m->ol_flags |= PKT_RX_VLAN_PKT;
