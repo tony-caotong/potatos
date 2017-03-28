@@ -21,6 +21,12 @@ struct filter_ipv4_rule {
 	uint8_t flag;
 };
 
+/*
+ * filter_init():
+ *	This init function is not thread-safe, as all cores under one sock
+ *	will share the same lpm object. Must use it in master-lcore then
+ *	query could be invoked in each processing lcores. 
+ */
 int filter_init(struct filter_ipv4_rule* rules, size_t size, uint32_t sockid);
 int is_filter_ipv4_pass(struct iphdr* iph, uint32_t sockid);
 int filter_destory(uint32_t sockid);

@@ -210,7 +210,9 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 	buf_size = 16;
 	bufs = malloc(buf_size * sizeof(struct rte_mbuf*));
 
-/*Temporary codes here, */
+/* Temporary codes here, FIXME: wrong usage here, 
+ *	cannot init in lcore process.
+ */
 #if 1
 	uint32_t socket_id = rte_socket_id();
 	int r = filter_init(filter_rules, sizeof(filter_rules), socket_id);
