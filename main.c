@@ -38,6 +38,7 @@ static int Quit = 0;
 static struct share_block Shb[RTE_MAX_LCORE];
 static int Pktoff = 0;
 
+/*
 struct filter_ipv4_rule filter_rules[] = {
 	{IPv4(10,1,0,0), 16, FILTER_DEFAULT_PASS},
 	{IPv4(10,2,0,0), 24, FILTER_DEFAULT_PASS},
@@ -46,6 +47,12 @@ struct filter_ipv4_rule filter_rules[] = {
 	{IPv4(10,2,2,0), 16, FILTER_DEFAULT_DROP},
 	{IPv4(10,0,3,0), 24, FILTER_DEFAULT_DROP}
 };
+*/
+
+static char filter_str[] = "10.1.0.0/16, 10.2.0.0/24, 10.3.0.0/24, !10.1.1.0/24, !10.2.2.0/16, !10.0.3.0/24";
+static struct filter_ipv4_rule filter_rules[16];
+static size_t rules_count;
+
 
 void _sig_handle(int sig)
 {
@@ -215,7 +222,7 @@ static int lcore_loop(__attribute__((unused)) void *arg)
  */
 #if 1
 	uint32_t socket_id = rte_socket_id();
-	int r = filter_init(filter_rules, sizeof(filter_rules), socket_id);
+	int r = filter_init(filter_rules, rules_count, socket_id);
 	if (r < 0)
 		printf("Errors. filter_init()\n");
 #endif
@@ -389,7 +396,10 @@ int main(int argc, char** argv)
 	}
 
 	/* 3.1. Set packet filter. */
-//	rte_lpm_create(port_id, );
+	if ((rules_count = filter_compile(filter_str, filter_rules, 16)) < 0) {
+		printf("filter_compile error");
+		return -1;
+	}
 
 	/* 4. Initialize slave lcore things. */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {

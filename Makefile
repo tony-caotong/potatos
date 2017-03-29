@@ -5,3 +5,11 @@ CFLAGS += -Wall
 CFLAGS += -O0 -g
 
 include $(RTE_SDK)/mk/rte.extapp.mk
+
+.PHONY: potatosclean
+potatosclean:
+	@rm -f $(SRCDIR)/.*.o.cmd
+	@rm -f $(SRCDIR)/.*.o.d
+	@rm -f $(SRCDIR)/*.o
+
+clean: potatosclean

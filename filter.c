@@ -6,7 +6,10 @@
  */
 
 #include <stdbool.h>
+#include <arpa/inet.h>
+
 #include <rte_lpm.h>
+#include <rte_ip.h>
 #include "filter.h"
 
 #define NB_SOCKETS 8
@@ -19,6 +22,76 @@ struct rule_box {
 };
 
 static struct rule_box rule_box[NB_SOCKETS];
+
+#define VSIZE 5
+#define MASKX (VSIZE - 1)
+static int format_ipv4(const char* str, struct filter_ipv4_rule* rule)
+{
+	size_t n, i, j;
+	const char *p = str;
+	char *p1, *q, *save, *sub;
+	int tmp;
+	unsigned v[VSIZE];
+	int f = FILTER_DEFAULT_PASS;
+
+	/* 1. trim and dup. */
+	while (isspace(*p))
+		p++;
+	n = strlen(p);
+	while (n > 0 && isspace(p[n-1]))
+		n--;
+	if (n == 0)
+		return 0;
+
+	/* 2. white or black. */
+	if (p[0] == '!') {
+		f = FILTER_DEFAULT_DROP;
+		p++;
+		n--;
+	}
+
+	/* 1.1 yes! it is dup. */
+	if ((q = strndup(p, n)) == NULL)
+		return -1;
+
+	/* 3. split and check.*/
+	for (p1 = q, i = 0; ; p1 = NULL, i++) {
+		sub = strtok_r(p1, "/.",  &save);
+		if (sub == NULL)
+			break;
+		for (j = 0, tmp = 0; j < strlen(sub); j++) {
+			if (!isdigit(sub[j]))
+				goto err;
+			tmp = tmp * 10 + (sub[j] - '0');
+		}
+		if (i >= VSIZE)
+			goto err;
+		if (i == MASKX && *(p + (n-strlen(sub)-1)) != '/')
+			/* invaild token. */
+			goto err;
+		if (i == MASKX && tmp > 32)
+			/* invaild mask. */
+			goto err;
+		if (tmp > 255)
+			/* invaild mask. */
+			goto err;
+		v[i] = tmp;
+	}
+	if (i != VSIZE)
+		goto err;
+
+	/* 4. success and return. */
+	rule->ip = IPv4(v[0], v[1], v[2], v[3]);
+	rule->depth = v[MASKX];
+	rule->flag = f;
+
+	/* 1.99 don't forget to release. */
+	free(q);
+	return 0;
+err:
+	free(q);
+	return -1;
+}
 
 static int lpm_alloc(struct rte_lpm** lpmp, uint8_t flag, uint32_t sockid)
 {
@@ -44,6 +117,30 @@ static int lpm_alloc(struct rte_lpm** lpmp, uint8_t flag, uint32_t sockid)
 	return 0;
 }
 
+int filter_compile(char* str, struct filter_ipv4_rule rules[],
+		size_t size) {
+	char *p, *saveptr, *substr;
+	int count;
+	struct filter_ipv4_rule* rule;
+
+	count = 0;
+	rule = rules;
+	for (p = str; ; p = NULL) {
+		substr = strtok_r(p, ",", &saveptr);
+		if (substr == NULL)
+			break;
+		if (count >= size)
+			/* "filter items are too more." */
+			return -1;
+		if (format_ipv4(substr, rule + count) >= 0)
+			count++;
+		else
+			/* "Invalid filter string." */
+			return -1;
+	}
+	return count;
+}
+
 /*
  *	Default:
  *		A: all people is in White List.
@@ -59,8 +156,10 @@ static int lpm_alloc(struct rte_lpm** lpmp, uint8_t flag, uint32_t sockid)
  */
 int filter_init(struct filter_ipv4_rule* rules, size_t size, uint32_t sockid)
 {
-	struct rule_box* b;
 	int i;
+	struct rule_box* b;
+	struct filter_ipv4_rule* r;
+	struct rte_lpm** lpmp;
 
 	/* We do not initialize LPM table here, insteading of let them NULL,
 		so if there is no white/block rules, we can easily skip that
@@ -72,33 +171,25 @@ int filter_init(struct filter_ipv4_rule* rules, size_t size, uint32_t sockid)
 
 	/* populate the LPM table */
 	for (i = 0; i < size; i++) {
-		struct rte_lpm* lpm;
-		struct filter_ipv4_rule* r = rules + i;
+		r = rules + i;
 
-		if (r->flag == FILTER_DEFAULT_PASS) {
-			if (b->white_list == NULL) {
-				/* create the white LPM table */
-				if (lpm_alloc(&(b->white_list), r->flag,
-						sockid) < 0)
-					goto err;
-			}
-			lpm = b->white_list;
-		} else if (r->flag == FILTER_DEFAULT_DROP) {
-			if (b->black_list == NULL) {
-				/* create the black LPM table */
-				if (lpm_alloc(&(b->black_list), r->flag,
-						sockid) < 0)
-					goto err;
-			}
-			lpm = b->black_list;
-		} else {
-			continue;
-		}
+		if (r->flag == FILTER_DEFAULT_PASS)
+			lpmp = &(b->white_list);
+		else if (r->flag == FILTER_DEFAULT_DROP)
+			lpmp = &(b->black_list);
+		else
+			goto err;
 
-		if (rte_lpm_add(lpm, r->ip, r->depth, r->flag) < 0) {
-			/*TODO: DEBUG*/
-		}
-		/*TODO: INFO*/
+		/* create LPM table when first use. */
+		if (*lpmp == NULL)
+			if (lpm_alloc(lpmp, r->flag, sockid) < 0)
+				goto err;
+		if (rte_lpm_add(*lpmp, r->ip, r->depth, r->flag) < 0)
+			goto err;
+		struct in_addr in;
+		in.s_addr = htonl(r->ip);
+		printf("Add rule: %s/%d %s\n", inet_ntoa(in), r->depth, 
+			r->flag == FILTER_DEFAULT_PASS ? "white":"black");
 	}
 	return 0;
 err:
