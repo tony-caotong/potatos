@@ -49,9 +49,9 @@ struct filter_ipv4_rule filter_rules[] = {
 };
 */
 
-static char filter_str[] = "10.1.0.0/16, 10.2.0.0/24, 10.3.0.0/24, !10.1.1.0/24, !10.2.2.0/16, !10.0.3.0/24";
+static char filter_str[] = " 10.1.0.0/16, 10.2.0.0/24 , 10.3.0.0/24, !10.1.1.0/24, !10.2.2.0/16, !10.0.3.0/24 ";
 static struct filter_ipv4_rule filter_rules[16];
-static size_t rules_count;
+static int rules_count;
 
 
 void _sig_handle(int sig)
@@ -224,7 +224,11 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 	uint32_t socket_id = rte_socket_id();
 	int r = filter_init(filter_rules, rules_count, socket_id);
 	if (r < 0)
-		printf("Errors. filter_init()\n");
+		printf("Errors. 1 filter_init()\n");
+	/* Testing for reentrant. */
+	r = filter_init(filter_rules, rules_count, socket_id);
+	if (r < 0)
+		printf("Errors. 2 filter_init()\n");
 #endif
 
 	rx_sum = 0;
@@ -397,7 +401,7 @@ int main(int argc, char** argv)
 
 	/* 3.1. Set packet filter. */
 	if ((rules_count = filter_compile(filter_str, filter_rules, 16)) < 0) {
-		printf("filter_compile error");
+		printf("filter_compile error\n");
 		return -1;
 	}
 

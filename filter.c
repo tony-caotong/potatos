@@ -6,6 +6,7 @@
  */
 
 #include <stdbool.h>
+#include <string.h>
 #include <arpa/inet.h>
 
 #include <rte_lpm.h>
@@ -19,6 +20,7 @@
 struct rule_box {
 	struct rte_lpm* white_list;
 	struct rte_lpm* black_list;
+	int8_t is_init;
 };
 
 static struct rule_box rule_box[NB_SOCKETS];
@@ -32,7 +34,7 @@ static int format_ipv4(const char* str, struct filter_ipv4_rule* rule)
 	char *p1, *q, *save, *sub;
 	int tmp;
 	unsigned v[VSIZE];
-	int f = FILTER_DEFAULT_PASS;
+	int f;
 
 	/* 1. trim and dup. */
 	while (isspace(*p))
@@ -44,6 +46,7 @@ static int format_ipv4(const char* str, struct filter_ipv4_rule* rule)
 		return 0;
 
 	/* 2. white or black. */
+	f = FILTER_DEFAULT_PASS;
 	if (p[0] == '!') {
 		f = FILTER_DEFAULT_DROP;
 		p++;
@@ -87,7 +90,7 @@ static int format_ipv4(const char* str, struct filter_ipv4_rule* rule)
 
 	/* 1.99 don't forget to release. */
 	free(q);
-	return 0;
+	return 1;
 err:
 	free(q);
 	return -1;
@@ -117,23 +120,23 @@ static int lpm_alloc(struct rte_lpm** lpmp, uint8_t flag, uint32_t sockid)
 	return 0;
 }
 
-int filter_compile(char* str, struct filter_ipv4_rule rules[],
+int filter_compile(const char* str, struct filter_ipv4_rule rules[],
 		size_t size) {
-	char *p, *saveptr, *substr;
-	int count;
+	char *p, *substr, *saveptr = NULL;
+	int count, r;
 	struct filter_ipv4_rule* rule;
 
 	count = 0;
 	rule = rules;
-	for (p = str; ; p = NULL) {
+	for (p = (char*)str; ; p = NULL) {
 		substr = strtok_r(p, ",", &saveptr);
 		if (substr == NULL)
 			break;
 		if (count >= size)
 			/* "filter items are too more." */
 			return -1;
-		if (format_ipv4(substr, rule + count) >= 0)
-			count++;
+		if ((r = format_ipv4(substr, rule + count)) >= 0)
+			count+=r;
 		else
 			/* "Invalid filter string." */
 			return -1;
@@ -161,11 +164,15 @@ int filter_init(struct filter_ipv4_rule* rules, size_t size, uint32_t sockid)
 	struct filter_ipv4_rule* r;
 	struct rte_lpm** lpmp;
 
+	b = &(rule_box[sockid]);
+	if (b->is_init)
+		/* It's not a error, we support reentrant. */
+		return 0;
 	/* We do not initialize LPM table here, insteading of let them NULL,
 		so if there is no white/block rules, we can easily skip that
 		checking.
 	*/
-	b = &(rule_box[sockid]);
+	b->is_init = true;
 	b->white_list = NULL;
 	b->black_list = NULL;
 
@@ -186,13 +193,16 @@ int filter_init(struct filter_ipv4_rule* rules, size_t size, uint32_t sockid)
 				goto err;
 		if (rte_lpm_add(*lpmp, r->ip, r->depth, r->flag) < 0)
 			goto err;
+#if 1
 		struct in_addr in;
 		in.s_addr = htonl(r->ip);
 		printf("Add rule: %s/%d %s\n", inet_ntoa(in), r->depth, 
 			r->flag == FILTER_DEFAULT_PASS ? "white":"black");
+#endif
 	}
 	return 0;
 err:
+	filter_destory(sockid);
 	return -1;
 }
 
@@ -208,13 +218,14 @@ int filter_destory(uint32_t sockid)
 		rte_lpm_free(b->black_list);
 		b->black_list = NULL;
 	}
+	b->is_init = false;
 	return 0;
 }
 
 int is_filter_ipv4_pass(struct iphdr* iph, uint32_t sockid)
 {
 	uint32_t saddr, daddr;
-	bool is_white, is_black;
+	bool in_white, in_black;
 	/* next_hop is flag. */
 	uint32_t next_hop;
 	struct rule_box* b = &(rule_box[sockid]);
@@ -223,26 +234,29 @@ int is_filter_ipv4_pass(struct iphdr* iph, uint32_t sockid)
 	saddr = ntohl(iph->saddr);
 	daddr = ntohl(iph->daddr);
 	
-	is_white = true;
-	is_black = false;
+	in_white = false;
+	in_black = false;
 
 	/* 1. handle white list, if both of saddr and daddr are not in
-		list, `is_white` will be set false; if white_list is NULL
+		list, `in_white` will be set false; if white_list is NULL
 		PASSed.
 	*/
 	if (b->white_list) {
 		r = rte_lpm_lookup(b->white_list, saddr, &next_hop);
 		if (r == -EINVAL)
-			abort();
-		 /*found, and whatever next_hop is. */
-		if (r != 0)
-			is_white = false;
+			goto err;
+		/*found, and whatever next_hop is. */
+		if (r == 0)
+			in_white |= true;
 		r = rte_lpm_lookup(b->white_list, daddr, &next_hop);
 		if (r == -EINVAL)
-			abort();
-		 /*found, and whatever next_hop is. */
-		if (r != 0)
-			is_white |= false;
+			goto err;
+		/*found, and whatever next_hop is. */
+		if (r == 0)
+			in_white |= true;
+	} else {
+		/* NOTE: Empty white list MEANS everything is white. */
+		in_white = true;
 	}
 
 	/* 2. handle black list, either saddr or daddr was blacked,
@@ -251,17 +265,23 @@ int is_filter_ipv4_pass(struct iphdr* iph, uint32_t sockid)
 	if (b->black_list) {
 		r = rte_lpm_lookup(b->black_list, saddr, &next_hop);
 		if (r == -EINVAL)
-			abort();
+			goto err;
 		if (r == 0)
-			is_black = true;
+			in_black |= true;
 		r = rte_lpm_lookup(b->black_list, daddr, &next_hop);
 		if (r == -EINVAL)
-			abort();
+			goto err;
 		if (r == 0)
-			is_black = true;
+			in_black |= true;
+		/* Empty black list MEANS nothing is black.
+	} else {
+		in_black = false;
+		*/
 	}
 
 	/* 3. combine black and white. */
-	return (!is_black && is_white);
+	return (!in_black && in_white);
+err:
+	abort();
 }
 
