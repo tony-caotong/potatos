@@ -10,6 +10,7 @@
 
 #include <rte_ethdev.h>
 
+#include "config.h"
 #include "hw_features.h"
 
 static inline void sw_ptype_parse_l4(struct rte_mbuf *m);
@@ -71,7 +72,7 @@ static inline void sw_ptype_parse_l4(struct rte_mbuf *m)
 
 	/* deal with just 2 vlans. */
 	int i;
-	for (i = 0; i < MAX_VLAN_EMBED && ether_type 
+	for (i = 0; i < CONFIG_ETH_VLAN_EMBED_LIMIT && ether_type 
 			== rte_cpu_to_be_16(ETHER_TYPE_VLAN); i++) {
 		struct vlan_hdr *vh = p;
 		ether_type = vh->eth_proto;

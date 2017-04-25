@@ -22,13 +22,13 @@
 #include <rte_launch.h>
 #include <rte_ip.h>
 
+#include "config.h"
 #include "decoder.h"
-#include "priv.h"
+#include "ip_reassemble.h"
 #include "hw_features.h"
 #include "filter.h"
+#include "wedge.h"
 #include "debug.h"
-
-#define P_PKT_SNAPLEN 8192
 
 struct share_block {
 	sem_t sem_monitor;
@@ -36,9 +36,10 @@ struct share_block {
 
 static int Quit = 0;
 static struct share_block Shb[RTE_MAX_LCORE];
-static int Pktoff = 0;
 
 /*
+static char filter_str[] = " 10.1.0.0/16, 10.2.0.0/24 , 10.3.0.0/24, "
+	"!10.1.1.0/24, !10.2.2.0/16, !10.0.3.0/24 ";
 struct filter_ipv4_rule filter_rules[] = {
 	{IPv4(10,1,0,0), 16, FILTER_DEFAULT_PASS},
 	{IPv4(10,2,0,0), 24, FILTER_DEFAULT_PASS},
@@ -49,10 +50,10 @@ struct filter_ipv4_rule filter_rules[] = {
 };
 */
 
-static char filter_str[] = " 10.1.0.0/16, 10.2.0.0/24 , 10.3.0.0/24, !10.1.1.0/24, !10.2.2.0/16, !10.0.3.0/24 ";
+static char filter_str[] = "";
+
 static struct filter_ipv4_rule filter_rules[16];
 static int rules_count;
-
 
 void _sig_handle(int sig)
 {
@@ -77,22 +78,44 @@ void _sig_handle(int sig)
 	}
 }
 
-void debug_binary_print(char* capital, char* buf, size_t length)
+static int earlier_decode(struct rte_mbuf* buf, uint32_t sockid)
 {
-	int i = 0;
-	
-	printf("Capital: [%s]\n", capital);
-	while(i < length) {
-		if (i%32 == 0)
-			printf("0x%016lx --     ", (unsigned long)&buf[i]);
-		printf("%02X", (unsigned char)buf[i]);
-		i++;
-		if (i%32 == 0 && i != length)
-			printf("\n");
-		else if (i%8 == 0)
-			printf(" ");
+	void* raw, *p;
+
+	raw = rte_pktmbuf_mtod(buf, void*);
+
+	if (RTE_ETH_IS_IPV4_HDR(buf->packet_type)) {
+		p = raw + sizeof(struct ether_hdr);
+		struct iphdr* iph = p;
+
+		/* skip vlans. */
+		if (IS_HW_VLAN_PKT(buf->ol_flags)) {
+			int i, n;
+			uint16_t ether_type = ETHER_TYPE_VLAN;
+
+			n = CONFIG_ETH_VLAN_EMBED_LIMIT;
+			for (i = 0; i < n && (ether_type == 
+				rte_cpu_to_be_16(ETHER_TYPE_VLAN)); i++) {
+				struct vlan_hdr *vh = p;
+				ether_type = vh->eth_proto;
+				p = vh + 1;
+			}
+		}
+
+		if (!is_filter_ipv4_pass(iph, sockid)) {
+			/* ATTENTION: this pack was droped. */
+			printf("ATTENTION: this pack was droped.\n");
+			return RE_DROP;
+		}
+		/* BTW: assign predecode values. */
+		// TODO:
+
+	} else if (RTE_ETH_IS_IPV6_HDR(buf->packet_type)) {
+		return RE_DROP;
+	} else {
+		return RE_DROP;
 	}
-	printf("\n");
+	return RE_SUCC;
 }
 
 /* NOTE: informations for priv data.
@@ -122,55 +145,32 @@ void debug_binary_print(char* capital, char* buf, size_t length)
 	*** headroom size is fixed to 128 bytes (RTE_PKTMBUF_HEADROOM)
 
 */
-void handle_mbuf(struct rte_mbuf* buf, uint32_t sockid)
+void handle_mbuf(struct rte_mbuf* buf, uint32_t sockid, uint32_t lcore_id,
+	uint64_t cur_tsc)
 {
-	struct pkt* pkt;
-	struct priv* priv;
 	char* raw;
 	int len;
+	struct pkt* pkt;
+	static struct wedge_dpdk wedge;
 
-	priv = (void*)buf + sizeof(struct rte_mbuf);
-	pkt = buf->buf_addr + Pktoff;
 	raw = rte_pktmbuf_mtod(buf, char*);
 	len = buf->data_len;
 
 	/* 1. counters and staters. */
 	// TODO
 
-	/* 2. filters. */
-	if (RTE_ETH_IS_IPV4_HDR(buf->packet_type)) {
-		void* p = raw + sizeof(struct ether_hdr);
-		struct iphdr* iph = p;
-
-		/* skip vlans. */
-		if (IS_HW_VLAN_PKT(buf->ol_flags)) {
-			int i;
-			uint16_t ether_type = ETHER_TYPE_VLAN;
-
-			for (i = 0; i < MAX_VLAN_EMBED && ether_type == 
-				rte_cpu_to_be_16(ETHER_TYPE_VLAN); i++) {
-				struct vlan_hdr *vh = p;
-				ether_type = vh->eth_proto;
-				p = vh + 1;
-			}
-		}
-
-		if (!is_filter_ipv4_pass(iph, sockid)) {
-			/* ATTENTION: this pack was droped. */
-			printf("ATTENTION: this pack was droped.\n");
-			return;
-		}
-		/* BTW: assign predecode values. */
-		// TODO:
-
-	} else if (RTE_ETH_IS_IPV6_HDR(buf->packet_type)) {
-		;
-	} else {
-		;
-	}
+	/* 2. very earlier check with HardWare capibility. */
+	if (earlier_decode(buf, sockid) == RE_DROP)
+		return;
 
 	/* 3. decoders. */
-	if (decode_pkt(pkt, raw, len, priv) < 0) {
+	pkt = (void*)buf + sizeof(struct rte_mbuf);
+	wedge.lcore_id = lcore_id;
+	wedge.buf = buf;
+	wedge.cur_tsc = cur_tsc;
+	pkt->platform_wedge = &wedge;
+
+	if (decode_pkt(raw, len, pkt) < 0) {
 		;
 	}
 }
@@ -183,6 +183,9 @@ int lcore_init(uint32_t lcore_id)
 		perror("sem_init: ");
 		return -1;
 	}
+
+	if (ipv4_reassemble_init(lcore_id) < 0)
+		return -1;
 	return 0;
 }
 
@@ -194,6 +197,9 @@ int lcore_destroy(uint32_t lcore_id)
 		perror("sem_destroy: ");
 		return -1;
 	}
+	
+	if (ipv4_reassemble_destroy(lcore_id) < 0)
+		return -1;
 	return 0;
 }
 
@@ -202,20 +208,20 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 	struct rte_mbuf** bufs;
 	struct rte_mbuf* buf;
 	
-	uint64_t rx_sum;
+	uint64_t rx_sum, cur_tsc;
 	uint16_t nb_rx, buf_size, i;
 
 	uint8_t port_id = 0;
 	uint32_t lcore_id = rte_lcore_id();
 	uint16_t rx_queue_id = 7 - lcore_id;
 	struct share_block* sb = Shb + lcore_id;
+
 	sem_t* sm = &(sb->sem_monitor);
+	buf_size = 16;
+	bufs = malloc(buf_size * sizeof(struct rte_mbuf*));
 
 	printf("hello from [core %u] [port %u] [queue %u]\n",
 		lcore_id, port_id, rx_queue_id);
-
-	buf_size = 16;
-	bufs = malloc(buf_size * sizeof(struct rte_mbuf*));
 
 /* Temporary codes here, FIXME: wrong usage here, 
  *	cannot init in lcore process.
@@ -238,6 +244,7 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 		printf("heart beat from [core %u] [port %u] [queue %u]\n",
 			lcore_id, port_id, rx_queue_id);
 #endif
+
 		if (sem_trywait(sm) == 0) {
 			printf("thread[core: %d][port: %d][queue: %u]"\
 				" recv %lu pkts\n",
@@ -256,16 +263,20 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 			continue;
 		}
 		
+		cur_tsc = rte_rdtsc();
+
 		/* handle each pkt. */
 		for (i = 0; i < nb_rx; i++) {
 			buf = bufs[i];
-			debug_print_mbuf_infos(buf);
-			handle_mbuf(buf, socket_id);
+//			debug_print_mbuf_infos(buf);
+			handle_mbuf(buf, socket_id, lcore_id, cur_tsc);
 			rte_pktmbuf_free(buf);
 		}
 
 		/* emit infos */
 		rx_sum += nb_rx;
+
+		ipv4_reassemble_dpdk_death_row_free(lcore_id);
 	}
 	printf("Bye from [core %u] [port %u] [queue %u]\n",
 		lcore_id, port_id, rx_queue_id);
@@ -298,7 +309,6 @@ int main(int argc, char** argv)
 	int lcore_id;
 	int lcore_count;
 	int buf_size;
-	int pkthdr_size;
 	int priv_len;
 
 	struct rte_eth_conf eth_conf;
@@ -322,14 +332,11 @@ int main(int argc, char** argv)
 		1. Config Data Room size.
 		2. Check MTU configuration.
 	*/
-	buf_size = RTE_PKTMBUF_HEADROOM + P_PKT_SNAPLEN;
-	pkthdr_size = sizeof(struct pkt);
-	Pktoff = RTE_PKTMBUF_HEADROOM - pkthdr_size;
-	priv_len = sizeof(struct priv);
-	if (Pktoff < 0) {
-		priv_len += -Pktoff;
-	}
-
+	buf_size = RTE_PKTMBUF_HEADROOM + CONFIG_P_PKT_SNAPLEN;
+	priv_len = (sizeof(struct pkt) + RTE_MBUF_PRIV_ALIGN - 1)
+		/ RTE_MBUF_PRIV_ALIGN * RTE_MBUF_PRIV_ALIGN;
+	fprintf(stderr, "priv_len: %d\n", priv_len);
+	
 	/* Note:
 		n: n = (2^q - 1)
 

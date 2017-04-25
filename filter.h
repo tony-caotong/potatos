@@ -23,6 +23,7 @@ struct filter_ipv4_rule {
 
 int filter_compile(const char* str, struct filter_ipv4_rule rules[],
 		size_t size);
+
 /*
  * filter_init():
  *	1. This init function is not thread-safe, as all cores under one sock

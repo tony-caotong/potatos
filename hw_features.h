@@ -8,7 +8,8 @@
 #ifndef __HW_FEATURES__
 #define __HW_FEATURES__
 
-#define MAX_VLAN_EMBED 2
+#include "config.h"
+
 #define IS_HW_VLAN_PKT(ol) ((ol) & PKT_RX_VLAN_PKT)
 
 int is_hw_parse_ptype_ipv4(int port_id);

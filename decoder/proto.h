@@ -12,6 +12,7 @@
 #define addprotocol(item) add_proto_item(item, #item),
 
 addprotocol(PROTO_ETHER)
+addprotocol(PROTO_VLAN)
 addprotocol(PROTO_IPV4)
 addprotocol(PROTO_IPV6)
 addprotocol(PROTO_ICMP)
