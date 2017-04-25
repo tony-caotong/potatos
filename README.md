@@ -13,7 +13,10 @@
       * dpdk-16.07.2
 
 # Logs
-### v20170327
+### v20170425-001
+support ip frag reassemble by dpdk rte_eth_frag Lib.
+
+### v20170327-001
 supporting ipv4 filter(black list and white list) implemented by two LPMs.
 
 ### v20170210-001
