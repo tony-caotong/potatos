@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "list.h"
+
 #define STACK_SIZE 16
 
 struct protocol_stack_item {
@@ -20,11 +22,35 @@ struct protocol_stack_item {
 
 typedef struct protocol_stack_item protocol_stack[STACK_SIZE];
 
+struct ipv4_5tuple{
+	uint32_t sip;
+	uint32_t dip;
+	uint16_t sport;
+	uint16_t dport;
+	uint8_t l4_proto;
+};
+
+#define PKT_TYPE_NONE 0
+#define PKT_TYPE_REASSEMBLED 1
 struct pkt {
+	struct list_head node;
+	/* stack */
 	uint8_t index;
 	protocol_stack stack;
+	uint16_t l3_proto;
+	struct ipv4_5tuple tuple5;
+//	uint8_t l5_proto;
+
 	/* timestamp */
+	time_t ctime;
+
+	/* platform things */
 	void* platform_wedge;
+
+	/* ip reassemble */
+	uint16_t type;
+//	uint16_t num;
+//	struct pkt* next;
 } __attribute__((packed));
 
 #define add_proto_item(item, string) item
@@ -63,9 +89,9 @@ static inline bool proto_push(struct pkt* pkt, void* p, enum proto_t protocol)
 	return true;
 }
 
-#define RE_SUCC				0
-#define RE_PASS	RE_SUCC
-#define RE_DROP				1
-#define RE_IPV4_FRAGMENT 		2
+#define RE_DECODER_SUCC				0
+#define RE_DECODER_DROP				1
+#define RE_DECODER_CACHED			2
+#define RE_DECODER_FLOWED			3
 
 #endif /*__PKT_H__*/

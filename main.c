@@ -23,7 +23,8 @@
 #include <rte_ip.h>
 
 #include "config.h"
-#include "decoder.h"
+#include "trans_decoder.h"
+#include "flow.h"
 #include "ip_reassemble.h"
 #include "hw_features.h"
 #include "filter.h"
@@ -78,6 +79,11 @@ void _sig_handle(int sig)
 	}
 }
 
+void flow_tmo_cb(uint32_t lcore_id, struct flow_item* flow)
+{
+	return;
+}
+
 static int earlier_decode(struct rte_mbuf* buf, uint32_t sockid)
 {
 	void* raw, *p;
@@ -105,17 +111,17 @@ static int earlier_decode(struct rte_mbuf* buf, uint32_t sockid)
 		if (!is_filter_ipv4_pass(iph, sockid)) {
 			/* ATTENTION: this pack was droped. */
 			printf("ATTENTION: this pack was droped.\n");
-			return RE_DROP;
+			return RE_DECODER_DROP;
 		}
 		/* BTW: assign predecode values. */
 		// TODO:
 
 	} else if (RTE_ETH_IS_IPV6_HDR(buf->packet_type)) {
-		return RE_DROP;
+		return RE_DECODER_DROP;
 	} else {
-		return RE_DROP;
+		return RE_DECODER_DROP;
 	}
-	return RE_SUCC;
+	return RE_DECODER_SUCC;
 }
 
 /* NOTE: informations for priv data.
@@ -145,34 +151,43 @@ static int earlier_decode(struct rte_mbuf* buf, uint32_t sockid)
 	*** headroom size is fixed to 128 bytes (RTE_PKTMBUF_HEADROOM)
 
 */
-void handle_mbuf(struct rte_mbuf* buf, uint32_t sockid, uint32_t lcore_id,
+int handle_mbuf(struct rte_mbuf* buf, uint32_t sockid, uint32_t lcore_id,
 	uint64_t cur_tsc)
 {
+	int r;
 	char* raw;
 	int len;
 	struct pkt* pkt;
+	struct flow_item* flow;
 	static struct wedge_dpdk wedge;
 
 	raw = rte_pktmbuf_mtod(buf, char*);
 	len = buf->data_len;
+	r = RE_DECODER_SUCC;
 
 	/* 1. counters and staters. */
 	// TODO
 
 	/* 2. very earlier check with HardWare capibility. */
-	if (earlier_decode(buf, sockid) == RE_DROP)
-		return;
+	if ((r = earlier_decode(buf, sockid)) == RE_DECODER_DROP)
+		return r;
 
 	/* 3. decoders. */
 	pkt = (void*)buf + sizeof(struct rte_mbuf);
 	wedge.lcore_id = lcore_id;
 	wedge.buf = buf;
 	wedge.cur_tsc = cur_tsc;
+	pkt->type = PKT_TYPE_NONE;
 	pkt->platform_wedge = &wedge;
 
-	if (decode_pkt(raw, len, pkt) < 0) {
-		;
-	}
+	if ((r = decode_pkt(raw, len, pkt)) < 0)
+		return r;
+	if (r == RE_DECODER_CACHED)
+		return r;
+
+	if ((r = flow_pkt(pkt, &flow)) < 0)
+		return r;
+	return r;
 }
 
 int lcore_init(uint32_t lcore_id)
@@ -185,6 +200,8 @@ int lcore_init(uint32_t lcore_id)
 	}
 
 	if (ipv4_reassemble_init(lcore_id) < 0)
+		return -1;
+	if (flow_ipv4_create(lcore_id) < 0)
 		return -1;
 	return 0;
 }
@@ -199,6 +216,8 @@ int lcore_destroy(uint32_t lcore_id)
 	}
 	
 	if (ipv4_reassemble_destroy(lcore_id) < 0)
+		return -1;
+	if (flow_ipv4_destroy(lcore_id) < 0)
 		return -1;
 	return 0;
 }
@@ -249,6 +268,7 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 			printf("thread[core: %d][port: %d][queue: %u]"\
 				" recv %lu pkts\n",
 				lcore_id, port_id, rx_queue_id, rx_sum);
+			flow_ipv4_state(lcore_id);
 		} else if (errno == EINVAL) {
 			printf("sem_trywait error [core %d]\n", lcore_id);
 		}
@@ -269,14 +289,16 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 		for (i = 0; i < nb_rx; i++) {
 			buf = bufs[i];
 //			debug_print_mbuf_infos(buf);
-			handle_mbuf(buf, socket_id, lcore_id, cur_tsc);
-			rte_pktmbuf_free(buf);
+			r = handle_mbuf(buf, socket_id, lcore_id, cur_tsc);
+			if (r != RE_DECODER_CACHED && r != RE_DECODER_FLOWED)
+				rte_pktmbuf_free(buf);
 		}
 
 		/* emit infos */
 		rx_sum += nb_rx;
 
 		ipv4_reassemble_dpdk_death_row_free(lcore_id);
+		flow_ipv4_timeout(lcore_id, 100, flow_tmo_cb);
 	}
 	printf("Bye from [core %u] [port %u] [queue %u]\n",
 		lcore_id, port_id, rx_queue_id);

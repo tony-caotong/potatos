@@ -5,10 +5,10 @@
  *
  */
 
-#ifndef __DECODER_H__
-#define __DECODER_H__
+#ifndef __TRANS_DECODER_H__
+#define __TRANS_DECODER_H__
 
 #include "pkt.h"
 int decode_pkt(char* raw, int len, struct pkt* pkt);
 
-#endif /*__DECODER_H__*/
+#endif /*__TRANS_DECODER_H__*/

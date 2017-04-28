@@ -13,6 +13,10 @@
       * dpdk-16.07.2
 
 # Logs
+
+### v20170428-001
+support l2-l3 flow recognized. using rte_hash, rte_mempool and kernel list.
+
 ### v20170425-001
 support ip frag reassemble by dpdk rte_eth_frag Lib.
 

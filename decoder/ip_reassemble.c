@@ -79,8 +79,8 @@ char* ipv4_reassemble(char* raw, unsigned len, char** out, unsigned* ol,
 	if (p != NULL) {
 		if (p != wedge->buf)
 			wedge->buf = p;
-		*ol = p->data_len - p->l2_len - p->l3_len;
-		*out = rte_pktmbuf_mtod(p, char*) - p->l2_len - p->l3_len;
+		*ol = p->data_len - p->l2_len;
+		*out = rte_pktmbuf_mtod(p, char*) + p->l2_len;
 		res = *out;
 	}
 //	rte_ip_frag_table_statistics_dump(stderr, tbl);

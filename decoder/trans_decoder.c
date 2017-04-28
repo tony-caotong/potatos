@@ -9,7 +9,7 @@
 #include <arpa/inet.h>
 
 #include "config.h"
-#include "decoder.h"
+#include "trans_decoder.h"
 #include "wedge.h"
 #include "decode_ipv4.h"
 #include "ip_reassemble.h"
@@ -24,7 +24,7 @@ int decode_pkt(char* raw, int len, struct pkt* pkt)
 	uint16_t type;
 	int i, l = len, r = 0;
 	void* p;
-
+	
 #ifdef _PLATFORM_DPDK
 	int l2_len;
 	struct wedge_dpdk* wedge;
@@ -57,7 +57,7 @@ int decode_pkt(char* raw, int len, struct pkt* pkt)
 	m = wedge->buf;
 	m->l2_len = l2_len;
 #endif
-	
+	pkt->l3_proto = type;
 	switch (type) {
 	case ETHERTYPE_IP:
 		r = decode_ipv4(p, l, pkt);
@@ -69,6 +69,7 @@ int decode_pkt(char* raw, int len, struct pkt* pkt)
 		/*r = decode_arp(p, l, pkt);*/
 		break;
 	default:
+		pkt->l3_proto = 0;
 		break;
 	}
 
