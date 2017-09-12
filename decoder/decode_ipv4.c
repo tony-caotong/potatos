@@ -49,7 +49,7 @@ int decode_ipv4(char* raw, int len, struct pkt* pkt)
 			return RE_DECODER_CACHED;
 		iph = (struct iphdr*)p;
 		snaplen = ol;
-		pkt->type = PKT_TYPE_REASSEMBLED;
+		pkt->type |= PKT_TYPE_REASSEMBLED;
 #ifdef _PLATFORM_DPDK
 		fprintf(stderr, "packets reassembled!\n");
 		debug_print_mbuf_infos(wedge->buf);
@@ -70,16 +70,17 @@ int decode_ipv4(char* raw, int len, struct pkt* pkt)
 	pkt->tuple5.sip = iph->saddr;
 	pkt->tuple5.dip = iph->daddr;
 	pkt->tuple5.l4_proto = protocol;
+	pkt->l3_hdr = iph;
 
 	if (!proto_push(pkt, iph, PROTO_IPV4))
 		return -1;
 
 	switch (protocol) {
 	case IPPROTO_TCP:
-		r = decode_tcp(p + hlen, l - hlen, pkt);
+		r = decode_tcp(p + hlen, len - hlen, pkt, l - hlen);
 		break;
 	case IPPROTO_UDP:
-		r = decode_udp(p + hlen, l - hlen, pkt);
+		r = decode_udp(p + hlen, len - hlen, pkt, l - hlen);
 		break;
 	case IPPROTO_ICMP:
 		break;

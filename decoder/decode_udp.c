@@ -11,7 +11,7 @@
 #include "pkt.h"
 #include "decode_udp.h"
 
-int decode_udp(char* raw, uint32_t len, struct pkt* pkt)
+int decode_udp(char* raw, uint32_t len, struct pkt* pkt, uint32_t plen)
 {
 	struct udphdr* hdr;
 	uint32_t sport, dport;

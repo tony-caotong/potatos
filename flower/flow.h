@@ -13,30 +13,39 @@
 
 #include "pkt.h"
 
-#define FLOW_DIR_UP	0
-#define FLOW_DIR_DOWN	1
+#define FLOW_ORIENT_UNKNOWN -1
+#define FLOW_NORTH 0
+#define FLOW_SOUTH 1
 
 struct ipv4_key {
 	uint64_t part1;
 	uint64_t part2;
 };
 
+/**
+ *	            North
+ *	        ------------>
+ *	W(small)  clockwist  E(big)
+ *	        <------------
+ *	            South
+ *	We use IP+PORT to decide smaller or bigger.
+ */
 struct flow_item {
 	struct ipv4_key key;
 	/* It is value of direction ^ (reversed value of first pkt) */
-	uint8_t key_salt;
+	//uint8_t key_salt;
 
-	struct list_head upstream;	/* client to server. */
-	struct list_head downstream;	/* server to client. */
-	uint32_t client_ip;
-	uint32_t server_ip;
-	uint16_t client_port;
-	uint16_t server_port;
 	uint8_t protocol;
-	uint32_t up_node_count;
-	uint32_t down_node_count;
-
 	time_t atime;
+	struct stream_tcp stream;
+
+	uint32_t wip;
+	uint32_t eip;
+	uint16_t wport;
+	uint16_t eport;
+	uint32_t ncount;
+	uint32_t scount;
+
 }__attribute__((packed));
 
 typedef void (*flow_timeout_cb)(uint32_t lcore_id, struct flow_item* flow);

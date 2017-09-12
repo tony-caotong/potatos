@@ -187,6 +187,8 @@ int handle_mbuf(struct rte_mbuf* buf, uint32_t sockid, uint32_t lcore_id,
 
 	if ((r = flow_pkt(pkt, &flow)) < 0)
 		return r;
+	if ((r = stream_pkt(pkt, flow)) < 0)
+		return r;
 	return r;
 }
 
@@ -290,7 +292,7 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 			buf = bufs[i];
 //			debug_print_mbuf_infos(buf);
 			r = handle_mbuf(buf, socket_id, lcore_id, cur_tsc);
-			if (r != RE_DECODER_CACHED && r != RE_DECODER_FLOWED)
+			if (r != RE_DECODER_CACHED)
 				rte_pktmbuf_free(buf);
 		}
 

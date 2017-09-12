@@ -30,8 +30,9 @@ struct ipv4_5tuple{
 	uint8_t l4_proto;
 };
 
-#define PKT_TYPE_NONE 0
-#define PKT_TYPE_REASSEMBLED 1
+#define PKT_TYPE_NONE 0x0000
+#define PKT_TYPE_REASSEMBLED 0x0001
+#define PKT_TYPE_DULPLICATE_L5DATA 0x0002
 struct pkt {
 	struct list_head node;
 	/* stack */
@@ -51,6 +52,14 @@ struct pkt {
 	uint16_t type;
 //	uint16_t num;
 //	struct pkt* next;
+
+	void* l3_hdr;
+	void* l4_hdr;
+	void* l5_hdr;
+	uint64_t l5_len;
+	/* valid only when 'PKT_TYPE_DULPLICATE_L5DATA' was set. */
+	void* app_begin;
+
 } __attribute__((packed));
 
 #define add_proto_item(item, string) item
@@ -89,9 +98,10 @@ static inline bool proto_push(struct pkt* pkt, void* p, enum proto_t protocol)
 	return true;
 }
 
-#define RE_DECODER_SUCC				0
-#define RE_DECODER_DROP				1
-#define RE_DECODER_CACHED			2
-#define RE_DECODER_FLOWED			3
+#define RE_FLOW_TAINTED			-2
+#define RE_COMMON_ERR			-1
+#define RE_PKT_SUCC			0
+#define RE_PKT_DROP			1
+#define RE_PKT_CACHED			2
 
 #endif /*__PKT_H__*/

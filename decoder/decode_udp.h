@@ -10,6 +10,6 @@
 
 #include "pkt.h" 
 
-int decode_udp(char* raw, uint32_t len, struct pkt* pkt);
+int decode_udp(char* raw, uint32_t len, struct pkt* pkt, uint32_t plen);
 
 #endif /*__DECODE_UDP_H__*/

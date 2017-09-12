@@ -82,10 +82,8 @@ struct flow_item* flow_ipv4_new(uint32_t lcore_id, struct ipv4_key* key)
 	}
 	memcpy(&(item->key), key, sizeof(((struct flow_item*)0)->key));
 	flow_touch(item);
-	INIT_LIST_HEAD(&item->upstream);
-	INIT_LIST_HEAD(&item->downstream);
-	item->up_node_count = 0;
-	item->down_node_count = 0;
+	item->ncount = 0;
+	item->scount = 0;
 
 	if (rte_hash_add_key_data(h, &(item->key), item) < 0) {
 		rte_mempool_put(p, (void**)(&item));
@@ -118,12 +116,17 @@ int flow_ipv4_del(uint32_t lcore_id, struct flow_item* item)
 	return 0;
 }
 
+/**
+ *	reversed == 1 means: samller is dst and bigger is src.
+ *	in other words:
+ * 		0 means North; 1 means South;
+ */
 static int generate_ipv4_key(uint32_t sip, uint16_t sport, uint32_t dip,
 	uint16_t dport, uint8_t protocol, struct ipv4_key* key)
 {
 	uint8_t reversed = 0;
 	uint64_t s, d;
-	uint64_t ip1, port1, ip2, port2;
+	uint64_t small_ip, small_port, big_ip, big_port;
 
 	s = sip;
 	s = (s << 16) + sport;
@@ -132,80 +135,68 @@ static int generate_ipv4_key(uint32_t sip, uint16_t sport, uint32_t dip,
 	fprintf(stderr, "DEBUG: gen_key: s: %lu d: %lu\n", s, d);
 	if (s <= d) {
 		reversed = 0;
-		ip1 = sip;
-		port1 = sport;
-		ip2 = dip;
-		port2 = dport;
+		small_ip = sip;
+		small_port = sport;
+		big_ip = dip;
+		big_port = dport;
 	} else {
 		reversed = 1;
-		ip1 = dip;
-		port1 = dport;
-		ip2 = sip;
-		port2 = sport;
+		small_ip = dip;
+		small_port = dport;
+		big_ip = sip;
+		big_port = sport;
 	}
-	key->part1 = (ip1 << 32) + (port1 << 16) + (ip2 >> 16);
-	key->part2 = (ip2 << 48) + (port2 << 32) + protocol;
+	key->part1 = (small_ip << 32) + (samll_port << 16) + (big_ip >> 16);
+	key->part2 = (big_ip << 48) + (big_port << 32) + protocol;
 	return reversed;
 }
 
 struct flow_item* flow_ipv4_find_or_add(uint32_t lcore_id,
 	uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport,
-	uint8_t protocol, struct pkt* pkt, uint8_t direction)
+	uint8_t protocol, struct pkt* pkt)
 {
 	int r;
 	struct rte_hash* h;
 	struct flow_item* item;
 	struct ipv4_key key;
-	uint8_t reversed;
-	struct list_head* list;
+	uint8_t revert;
+	uint8_t orient;
 
 	h = Objs[lcore_id].hash;
 
 	/* adjust key order. */
-	reversed = generate_ipv4_key(sip, sport, dip, dport, protocol, &key);
+	revert = generate_ipv4_key(sip, sport, dip, dport, protocol, &key);
+	orient = revert;
 
 	fprintf(stderr, "Go in flow_ipv4_find_or_add()\n");
 	r = rte_hash_lookup_data(h, &key, (void**)(&item));
 	if (r == -EINVAL)
 		return NULL;
 	else if (r == -ENOENT) {
+		/* TODO: Let's filter it first.
+			any no payload ack pkt, and fin even if has payload.
+			and others.
+		*/
 		item = flow_ipv4_new(lcore_id, &key);
 		item->protocol = protocol;
-		item->key_salt = direction ^ reversed;
-		if (direction == FLOW_DIR_UP) {
-			item->client_ip = sip;
-			item->client_port = sport;
-			item->server_ip = dip;
-			item->server_port = dport;
-		}
-		else { /* FLOW_DIR_DOWN */
-			item->client_ip = dip;
-			item->client_port = dport;
-			item->server_ip = sip;
-			item->server_port = sport;
+		if (!reverse) {
+			item->wip = sip;
+			item->wport = sport;
+			item->eip = dip;
+			item->eport = dport;
+		} else { /* reversed */
+			item->wip = dip;
+			item->wport = dport;
+			item->eip = sip;
+			item->eport = sport;
 		}
 	}
 
-	/* Things about: direction / reversed / stream.
-	 *	1. upstream means: those packets were sent from client to
-	 *		server.
-	 *	   downstream means: sent from server to client.
-	 *	2. our Key was ordered by ip+port, so each packet has a 
-	 *		featrue that is 'original' or 'reversed'.
-	 *	3. the orignal packet was sorted in the 'direction' named
-	 *		stream.
-	 *	4. the variable 'dir_salt' was sortd the state at the begining
-	 *		of flow created.
-	 */
-	reversed = item->key_salt ^ reversed;
-	if (reversed) {
-		list = &item->downstream;
-		item->down_node_count++;
+	if (orient == FLOW_NORTH) {
+		item->ncount++;
 	} else {
-		list = &item->upstream;
-		item->up_node_count++;
+		item->scount++;
 	}
-	list_add_tail(&pkt->node, list);
 	return item;
 }
 
@@ -214,13 +205,11 @@ int flow_ipv4_timeout(uint32_t lcore_id, uint32_t each, flow_timeout_cb cb)
 	struct ipv4_key* key;
 	struct flow_item* flow;
 	struct rte_hash* h;
-//	struct rte_mempool* p;
 	uint32_t iterate;
 	int i, r, count;
 	time_t cur;
 
 	h = Objs[lcore_id].hash;
-//	p = Objs[lcore_id].pool;
 	iterate = Objs[lcore_id].iterate;
 	cur = time(NULL);
 	count = 0;
@@ -292,45 +281,21 @@ void flow_ipv4_state(uint32_t lcore_id)
 			}
 		}
 	
-		ias.s_addr = flow->client_ip;
-		fprintf(stderr, "FLOW: client ip: %s\n", inet_ntoa(ias));
-		fprintf(stderr, "FLOW: client port: %u\n",
-			ntohs(flow->client_port));
-		iad.s_addr = flow->server_ip;
-		fprintf(stderr, "FLOW: server ip: %s\n", inet_ntoa(iad));
-		fprintf(stderr, "FLOW: server port: %u\n",
-			ntohs(flow->server_port));
+		ias.s_addr = flow->wip;
+		fprintf(stderr, "FLOW: west ip: %s\n", inet_ntoa(ias));
+		fprintf(stderr, "FLOW: west port: %u\n",
+			ntohs(flow->wport));
+		iad.s_addr = flow->eip;
+		fprintf(stderr, "FLOW: east ip: %s\n", inet_ntoa(iad));
+		fprintf(stderr, "FLOW: east port: %u\n",
+			ntohs(flow->eport));
 		fprintf(stderr, "FLOW: protocol: %u\n", flow->protocol);
 		fprintf(stderr, "FLOW: atime: %lu\n", flow->atime);
 		fprintf(stderr, "FLOW: key: 0x%016lx%016lx  salt: %u\n",
 			flow->key.part1, flow->key.part2, flow->key_salt);
 		count++;
-		fprintf(stderr, "FLOW: up node count: %u\n",
-			flow->up_node_count);
-		list_for_each(i, &(flow->upstream)) {
-			struct pkt* p = list_entry(i, struct pkt, node);
-
-			ias.s_addr = p->tuple5.sip;
-			iad.s_addr = p->tuple5.dip;
-			fprintf(stderr, "\t[%s:%u]->[%s:%u][%u]\n",
-				inet_ntoa(ias), ntohs(p->tuple5.sport),
-				inet_ntoa(iad), ntohs(p->tuple5.dport),
-				p->tuple5.l4_proto);
-			pkt_count++;
-		}
-		fprintf(stderr, "FLOW: down node count: %u\n",
-			flow->down_node_count);
-		list_for_each(i, &(flow->downstream)) {
-			struct pkt* p = list_entry(i, struct pkt, node);
-
-			ias.s_addr = p->tuple5.sip;
-			iad.s_addr = p->tuple5.dip;
-			fprintf(stderr, "\t[%s:%u]->[%s:%u][%u]\n",
-				inet_ntoa(ias), ntohs(p->tuple5.sport),
-				inet_ntoa(iad), ntohs(p->tuple5.dport),
-				p->tuple5.l4_proto);
-			pkt_count++;
-		}
+		fprintf(stderr, "FLOW: north count: %u\n", flow->ncount);
+		fprintf(stderr, "FLOW: south count: %u\n", flow->scount);
 	}
 	fprintf(stderr, "FLOW OBJ: total flow found: %zu"
 		" total pkts found: %zu\n", count, pkt_count);
@@ -344,7 +309,6 @@ static int flow_ipv4_reassemble(struct pkt* pkt, struct flow_item** flowp)
 	uint32_t sip, dip;
 	uint16_t sport, dport;
 	struct flow_item* flow;
-	uint8_t direction;
 	
 	wedge = pkt->platform_wedge;
 	lcore_id = wedge->lcore_id;
@@ -366,17 +330,40 @@ static int flow_ipv4_reassemble(struct pkt* pkt, struct flow_item** flowp)
 	/* 2. skip. means we do not care of this pack. */
 	// TODO
 	
-	/* 3. direction determinating. */
-	// TODO
-	direction = 0;
-
 	/* 4. find which flow belonged to or create a new one. */
 	flow = flow_ipv4_find_or_add(lcore_id, sip, sport,
-			dip, dport, protocol, pkt, direction);
+			dip, dport, protocol, pkt);
 	if (flow == NULL)
 		return -1;
 	*flowp = flow;
 	return 0;
+}
+
+int flow_orient_decide(struct pkt* pkt, struct flow_item* flow)
+{
+	uint32_t sip, dip;
+	uint16_t sport, dport;
+	uint8_t protocol;
+	uint8_t orient;
+
+	orient = FLOW_ORIENT_UNKNOWN;
+	sip = pkt->tuple5.sip;
+	dip = pkt->tuple5.dip;
+	sport = 0;
+	dport = 0;
+	protocol = pkt->tuple5.l4_proto;
+
+	if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP) {
+		sport = pkt->tuple5.sport;
+		dport = pkt->tuple5.dport;
+	}
+
+	if (sip == flow->eip && sport == flow->eport)
+		orient = FLOW_NORTH;
+	else
+		orient = FLOW_SOUTH;
+		
+	return orient;
 }
 
 int flow_pkt(struct pkt* pkt, struct flow_item** flowp)
