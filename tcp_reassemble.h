@@ -8,6 +8,9 @@
 #ifndef __TCP_REASSEMBLE_H__
 #define __TCP_REASSEMBLE_H__
 
+#include <stdbool.h>
+
+#include "pkt.h"
 #include "list.h"
 
 #define TCP_REASSEMBLE_COUNT_LIMIT 5
@@ -37,7 +40,6 @@
  */
 struct tcp_reassemble {
 	struct list_head list;
-	struct mbuf* ready;
 	uint32_t count;
 	uint32_t seq;
 	time_t ts;
@@ -45,7 +47,7 @@ struct tcp_reassemble {
 
 int tcp_reassemble_init(struct tcp_reassemble* tr);
 int tcp_reassemble_push(struct tcp_reassemble* tr, struct pkt* pkt);
-void* tcp_reassemble_pull(struct tcp_reassemble* tr);
+int tcp_reassemble_pull(struct tcp_reassemble* tr, struct pkt* pkt);
 int tcp_reassemble_destory(struct tcp_reassemble* tr);
 
 bool tcp_reassemble_timeout(struct tcp_reassemble* tr);

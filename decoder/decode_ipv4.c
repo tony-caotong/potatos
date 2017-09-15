@@ -19,7 +19,7 @@
 
 int decode_ipv4(char* raw, int len, struct pkt* pkt)
 {
-	int r = RE_DECODER_SUCC;
+	int r = RE_PKT_SUCC;
 	uint32_t sip __attribute__((unused)), dip __attribute__((unused)); 
 	uint16_t frag_off, id __attribute__((unused)), protocol;
 	uint32_t l, hlen, snaplen = len;
@@ -46,7 +46,7 @@ int decode_ipv4(char* raw, int len, struct pkt* pkt)
 		m->l3_len = iph->ihl * 4;
 #endif
 		if ((p = ipv4_reassemble(raw, len, &out, &ol, pkt)) == NULL)
-			return RE_DECODER_CACHED;
+			return RE_PKT_CACHED;
 		iph = (struct iphdr*)p;
 		snaplen = ol;
 		pkt->type |= PKT_TYPE_REASSEMBLED;
@@ -86,7 +86,7 @@ int decode_ipv4(char* raw, int len, struct pkt* pkt)
 		break;
 	default:
 		pkt->tuple5.l4_proto = 0;
-		r = RE_DECODER_DROP;
+		r = RE_PKT_DROP;
 		break;
 	}
 	return r;

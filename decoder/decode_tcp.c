@@ -5,6 +5,7 @@
  *
  */
 
+#include <assert.h>
 #include <netinet/tcp.h>
 
 #include "config.h"
@@ -25,7 +26,7 @@ int decode_tcp(char* raw, uint32_t len, struct pkt* pkt, uint32_t plen)
 
 	/* check header length */
 	if (hdr_len > 60 || hdr_len < 20) {
-		assert();
+		assert(1);
 		return -1;
 	}
 	pkt->tuple5.sport = sport;

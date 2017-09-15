@@ -30,6 +30,7 @@
 #include "filter.h"
 #include "wedge.h"
 #include "debug.h"
+#include "stream.h"
 
 struct share_block {
 	sem_t sem_monitor;
@@ -111,17 +112,17 @@ static int earlier_decode(struct rte_mbuf* buf, uint32_t sockid)
 		if (!is_filter_ipv4_pass(iph, sockid)) {
 			/* ATTENTION: this pack was droped. */
 			printf("ATTENTION: this pack was droped.\n");
-			return RE_DECODER_DROP;
+			return RE_PKT_DROP;
 		}
 		/* BTW: assign predecode values. */
 		// TODO:
 
 	} else if (RTE_ETH_IS_IPV6_HDR(buf->packet_type)) {
-		return RE_DECODER_DROP;
+		return RE_PKT_DROP;
 	} else {
-		return RE_DECODER_DROP;
+		return RE_PKT_DROP;
 	}
-	return RE_DECODER_SUCC;
+	return RE_PKT_SUCC;
 }
 
 /* NOTE: informations for priv data.
@@ -163,13 +164,13 @@ int handle_mbuf(struct rte_mbuf* buf, uint32_t sockid, uint32_t lcore_id,
 
 	raw = rte_pktmbuf_mtod(buf, char*);
 	len = buf->data_len;
-	r = RE_DECODER_SUCC;
+	r = RE_PKT_SUCC;
 
 	/* 1. counters and staters. */
 	// TODO
 
 	/* 2. very earlier check with HardWare capibility. */
-	if ((r = earlier_decode(buf, sockid)) == RE_DECODER_DROP)
+	if ((r = earlier_decode(buf, sockid)) == RE_PKT_DROP)
 		return r;
 
 	/* 3. decoders. */
@@ -182,13 +183,23 @@ int handle_mbuf(struct rte_mbuf* buf, uint32_t sockid, uint32_t lcore_id,
 
 	if ((r = decode_pkt(raw, len, pkt)) < 0)
 		return r;
-	if (r == RE_DECODER_CACHED)
+	if (r == RE_PKT_CACHED)
 		return r;
 
 	if ((r = flow_pkt(pkt, &flow)) < 0)
 		return r;
-	if ((r = stream_pkt(pkt, flow)) < 0)
-		return r;
+
+	if ((r = stream_pkt(pkt, flow)) < 0) {
+		/* ERROR */
+		if (r == RE_STREAM_TAINTED)
+			/* TODO: */;
+		return r; 
+	}
+	if (r == RE_STREAM_CLOSED)
+		flow_ipv4_del(lcore_id, flow);
+	else if (r == RE_PKT_CACHED)
+		/* skip */
+		return r; 
 	return r;
 }
 
@@ -205,6 +216,8 @@ int lcore_init(uint32_t lcore_id)
 		return -1;
 	if (flow_ipv4_create(lcore_id) < 0)
 		return -1;
+	if (stream_create(lcore_id) < 0)
+		return -1;
 	return 0;
 }
 
@@ -220,6 +233,8 @@ int lcore_destroy(uint32_t lcore_id)
 	if (ipv4_reassemble_destroy(lcore_id) < 0)
 		return -1;
 	if (flow_ipv4_destroy(lcore_id) < 0)
+		return -1;
+	if (stream_destroy(lcore_id) < 0)
 		return -1;
 	return 0;
 }
@@ -292,7 +307,7 @@ static int lcore_loop(__attribute__((unused)) void *arg)
 			buf = bufs[i];
 //			debug_print_mbuf_infos(buf);
 			r = handle_mbuf(buf, socket_id, lcore_id, cur_tsc);
-			if (r != RE_DECODER_CACHED)
+			if (r != RE_PKT_CACHED)
 				rte_pktmbuf_free(buf);
 		}
 

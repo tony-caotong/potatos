@@ -5,44 +5,127 @@
  *
  */
 
+#include <assert.h>
+
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+
+#include "wedge.h"
 #include "list.h"
 #include "tcp_reassemble.h"
 
-int tcp_reassemble_init(struct tcp_reassemble* tr)
-{
-	INIT_LIST_HEAD(tr->list);
-	tr->count = 0;
-	tr->seq = 0;
-	tr->ts = 0;
-	tr->ready =NULL;
-	
-	return 0;
-}
-
-/*
- *	Better to learn from ipv4_frag_reassemble():
- *		dpdk_root/lib/librte_ip_frag/rte_ipv4_reassembly.c 
- */
-static int chain()
-{
-	rte_pktmbuf_chain
-	rte_pktmbuf_adj
-}
-
-static int reassemble(struct list_head, uint32_t seq, struct mbuf** out)
-{
-
-}
-
-static void seq(struct pkt* pkt, uint32_t* seq, uint32_t* nseq)
+static inline void seq(struct pkt* pkt, uint32_t* seq, uint32_t* nseq)
 {
 	struct tcphdr* h;
 
-	/* TODO: check if this packet is a merged one. */
 	h = pkt->l4_hdr;
 	*seq = ntohl(h->seq);
+	/* event if this packet is a merged one. 
+		The l5_len is also maintained well. */
 	*nseq = *seq + pkt->l5_len;
 }
+
+/*
+ *	Before reading this code, first:
+ *	Better to learn from ipv4_frag_reassemble():
+ *		dpdk_root/lib/librte_ip_frag/rte_ipv4_reassembly.c 
+ */
+static int chain(struct pkt* first, struct pkt* second)
+{
+	/* first pkt may be a chained one,
+		the second pkt might be chained too. */
+
+	struct rte_mbuf* f, *s;
+	struct pkt* pkt;
+	struct wedge_dpdk* w;
+	uint32_t fs, fn, ss, sn;
+	uint8_t th_fin = 0;
+	int count = 0;
+
+	/* a situation need to be handled: 
+		first segment for second pkt was coverd by first pkt,
+		so, a. judgement this situation, b. free the first segment.
+		c. adjust the second segment. d. chain first pkt and second
+		segment and followers. */
+	seq(first, &fs, &fn);
+	seq(second, &ss, &sn);
+	w = (struct wedge_dpdk*)&first->platform_wedge;
+	f = w->buf;
+	w = (struct wedge_dpdk*)&second->platform_wedge;
+	s = w->buf;
+	if (fn > ss) {
+		uint32_t pkt_len, offset;
+		struct rte_mbuf* tmp;				
+
+		offset = ss;
+		while (s != NULL && offset + s->data_len < fn) {
+			pkt_len = s->pkt_len - s->data_len;
+			tmp = s;
+			offset += s->data_len;
+			s = s->next;
+			s->pkt_len = pkt_len;
+			s->nb_segs = tmp->nb_segs - 1;
+			rte_pktmbuf_free(tmp);
+			count--;
+		}
+		assert(s != NULL); /* Caller makes that could be. */
+		if (!s)
+			return count;
+		assert(offset >= sn);
+		
+		/* IMPORTANT: FIN flag should be reserved.
+			any packet droped before, is a duplicate one, of cause 
+			FIN is never covered by a longger sequence number.
+		 */
+		/* TODO: this line could be more beautiful. */
+		pkt = (void*)s + sizeof(struct rte_mbuf);
+		th_fin = ((struct tcphdr*)(pkt->l4_hdr))->fin;
+		/* NOTE: data_len / data_off / pkt_len */
+		rte_pktmbuf_adj(s, fn - offset);
+	}
+	assert(!(fn > ss)); /* Caller makes that could be. */
+
+	/* For struct pkt:
+		update first pkt's l5_len. */
+	first->l5_len += s->pkt_len;
+	count += s->nb_segs;
+	/* merge FIN flag only. */
+	((struct tcphdr*)(first->l4_hdr))->fin |= (th_fin & 0x00000001u);
+	/* NOTE: 
+		first: 'nb_segs' and 'pkt_len = whole'
+		second: 'pkt_len = data_len' ;
+	*/
+	rte_pktmbuf_chain(f, s);
+	
+	return count;
+}
+
+static void* pull(struct tcp_reassemble* tr, uint32_t seq_expect)
+{
+	struct list_head* first;
+	struct pkt* p;
+	struct rte_mbuf* m;
+	struct wedge_dpdk* w;
+	uint32_t se, nseq;
+
+	if (list_empty(&tr->list)) 
+		return NULL;
+
+	first = tr->list.next;
+	p = list_entry(first, struct pkt, node);
+	seq(p, &se, &nseq);
+	if (se <= seq_expect) {
+		list_del(first);
+		w = (struct wedge_dpdk*)(p->platform_wedge);
+		m = w->buf;
+		tr->count -= m->nb_segs;
+		/* update ts, if success pull. */
+		tr->ts = time(NULL);
+		return p;
+	}
+	return NULL;
+}
+
 
 /*
  *	We consider the pkt goin there which is already compared to the channel
@@ -50,16 +133,23 @@ static void seq(struct pkt* pkt, uint32_t* seq, uint32_t* nseq)
  */
 int tcp_reassemble_push(struct tcp_reassemble* tr, struct pkt* pkt)
 {
-	uint32_t seq, nseq;
-	struct list_head* p, *pre, *cur, *post;
+	uint32_t sequence, nseq;
+	struct pkt* cur;
+	struct list_head* p, *n, *pre;
+	bool step_a;
 
 	if (tr->count >= TCP_REASSEMBLE_COUNT_LIMIT)
 		return -1;
 
 	/* update ts. */
-	tr->ts = time();
-	seq(pkt, &seq, &nseq);
+	tr->ts = time(NULL);
+	seq(pkt, &sequence, &nseq);
 
+	if (list_empty(&tr->list)) {
+		list_add(&pkt->node, &tr->list);
+		tr->count++;
+		return 0;
+	}
 	/*
 	   pkt:              A              B         C          D
 	             ...--|xxxxxx|-------|xxxxx|----|xxxx|----|xxxxx|--...->
@@ -101,58 +191,123 @@ int tcp_reassemble_push(struct tcp_reassemble* tr, struct pkt* pkt)
 	 */
 	pre = NULL;
 	cur = pkt;
-	post = NULL;
-	list_for_each(p, tr->list) {
+	step_a = false;
+	list_for_each_safe(p, n, &tr->list) {
 		uint32_t s, n;
 		struct pkt* packet;
 		
-		packet = list_entry(p);
+		packet = list_entry(p, struct pkt, node);
 		seq(packet, &s, &n);
-		if (!post) {/*A*/
-			if (seq < s) {
-				post = packet;
-				continue;
-			}
-			pre = packet;
-		} else { /*B*/
+
+		/* Better: '<' not '<=' . */
+		if (!step_a && sequence < s) {
 			/* deal with left position. */
 			if (pre) {
 				uint32_t pre_s, pre_n;
-				seq(pre, &pre_s, &pre_n);
-				if (seq <= pre_n) {
+				struct pkt* p_pkt;
+		
+				p_pkt = list_entry(pre, struct pkt, node);
+				seq(p_pkt, &pre_s, &pre_n);
+				if (sequence <= pre_n) {
 					if (nseq <= pre_n) {
-						/* 5 */
-						/*TODO duplicata */
-						break;
-					}
-					/* 4,6,10 */
-					cur = chain(pre, cur);
-				} else 
-					/* 1,2,3,7,8,9 */
-					insert(cur, pre);
-			} else { /* insert first. */
-				insert(cur, tr->list);
-			}
+						struct rte_mbuf* m;
 
-			/* deal with right position. */
-			
-			/* a. free any node who need to be freed. */
+						/* 5 */
+						m = get_mbuf(cur);
+						tr->count -= m->nb_segs;
+						rte_pktmbuf_free(m);
+						break;
+					} else {
+						/* 4,6,10 */
+						tr->count += chain(p_pkt, cur);
+						cur = p_pkt;
+					}
+				} else {
+					/* 1,2,3,7,8,9 */
+					list_add(&cur->node, pre);
+					tr->count++;
+				}
+			} else { /* insert first. */
+				list_add(&cur->node, &tr->list);
+				tr->count++;
+			}
+			step_a = true;
 		}
+
+		/* deal with right position. */
+		if (step_a) {
+			if (nseq < s) {
+				/* work done. for 1 */
+				break;
+			} else if (nseq < n) {
+				/* 2,7,8,9,10 */
+				tr->count += chain(cur, packet);
+			} else {
+				struct rte_mbuf* m;
+
+				/* cur Must bigger then packet. free packet.*/
+				/* 3. */
+				list_del(&packet->node);
+				m = get_mbuf(packet);
+				tr->count -= m->nb_segs;
+				rte_pktmbuf_free(m);
+			}
+		}
+		pre = p;
 	}
+	return 0;
 }
 
-void* tcp_reassemble_pull(struct tcp_reassemble* tr, uint32_t seq)
+int tcp_reassemble_pull(struct tcp_reassemble* tr, struct pkt* pkt)
 {
-	/* update ts, if success pull. */
+	struct pkt* p;
+	struct tcphdr* h;
+
+	h = pkt->l4_hdr;
+
+	if ((p = pull(tr, ntohl(h->seq) + pkt->l5_len)) != NULL)
+		return chain(pkt, p);
+	return 0;
+}
+
+int tcp_reassemble_init(struct tcp_reassemble* tr)
+{
+	INIT_LIST_HEAD(&tr->list);
+	tr->count = 0;
+	tr->seq = 0;
+	tr->ts = 0;
+	
+	return 0;
 }
 
 int tcp_reassemble_destory(struct tcp_reassemble* tr)
 {
+	struct list_head* p, *n;
+	struct rte_mbuf* m;
+	struct pkt* pkt;
+	tr->count = 0;
+	tr->seq = 0;
+	tr->ts = 0;
 
+	list_for_each_safe(p, n, &tr->list) {
+		pkt = list_entry(p, struct pkt, node);
+		m = get_mbuf(pkt);		
+		rte_pktmbuf_free(m);
+	}
+	return 0;
 }
 
 bool tcp_reassemble_timeout(struct tcp_reassemble* tr)
 {
-	/* tr->ts > TS_LIMIT. && tr->count > 0. */
+	/**/
+	if (tr->count > 0)
+		assert(!list_empty(&tr->list));
+		if (tr->ts > TCP_REASSEMBLE_TS_LIMIT)
+			/* TODO: add all of them to free list. */
+			return true;
+	else
+		assert(list_empty(&tr->list));
+
+	return false;
 }
 

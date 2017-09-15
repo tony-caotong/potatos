@@ -5,9 +5,17 @@
  *
  */
 
+#include <stdlib.h>
+#include <assert.h>
 #include <netinet/tcp.h>
+#include <netinet/in.h>
 
-/* Bring in from suricata.
+#include <rte_branch_prediction.h>
+
+#include "flow.h"
+#include "stream_tcp.h"
+
+/* macro below Bring in from suricata.
 	https://tools.ietf.org/html/rfc793#section-3.4 */
 /* Macro's for comparing Sequence numbers
  * Page 810 from TCP/IP Illustrated, Volume 2. */
@@ -23,7 +31,7 @@ pkt:	  seq   seq+l5_len
 	   |------|
 channel:	last_seq     next_seq
 	            v            v
-	------------|------------|------------------------------------>
+	------------|zzzzzzzzzzzz|------------------------------------>
 situat:	1. |------|
 	2.       |------|
 	3.             |-------|
@@ -53,15 +61,14 @@ situat:	1. |------|
 			cached also. but when timing out it still isn't arrived
 			, free (cache, stream and flow) or mark it is invalid.
 */
-
-bool is_resend(struct pkt* pkt, struct channel* c) 
+static bool is_resend(struct pkt* pkt, struct channel* c) 
 {
 	struct tcphdr* h;
 	uint32_t next_seq;
 
 	h = pkt->l4_hdr;
-	next_seq = ntohl(h->seq) + datalen;
-	if (SEQ_LEQ(next_seq, c->next_seq)
+	next_seq = ntohl(h->seq) + pkt->l5_len;
+	if (SEQ_LEQ(next_seq, c->next_seq))
 		return true;
 	return false;
 }
@@ -69,12 +76,12 @@ bool is_resend(struct pkt* pkt, struct channel* c)
 /*
  *	Actually, it is 'sequence = sequence - 1'
  */	
-bool is_keep_alive_0byte(struct pkt* pkt, struct channel* c)
+static bool is_keep_alive_0byte(struct pkt* pkt, struct channel* c)
 {
 	struct tcphdr* h;
 
 	h = pkt->l4_hdr;
-	if (SEQ_LEQ(ntohl(h->seq), c->last_seq)
+	if (SEQ_LEQ(ntohl(h->seq), c->last_seq))
 		return true;
 	return false;
 }
@@ -83,12 +90,11 @@ bool is_keep_alive_0byte(struct pkt* pkt, struct channel* c)
 /* 9.3.1 fix packet out of order. */
 /* 9.3.2 fix packet resent. */
 /* 9.4 pull lastest packet back from channel cache. */
-int channel_pkt(struct pkt* pkt, struct channel* c)
+static int channel_pkt(struct pkt* pkt, struct channel* c)
 {
 	struct tcphdr* h;
-	int16_t datalen, win;
+	int16_t datalen;
 	uint32_t seq, next_seq;
-	struct pkt* tmp;
 	int r;
 
 	r = RE_PKT_SUCC;
@@ -97,6 +103,7 @@ int channel_pkt(struct pkt* pkt, struct channel* c)
 	seq = ntohl(h->seq);
 	next_seq = seq + datalen;
 //	TODO
+//	int16_t win;
 //	win = h->window;
 
 	/* deal with MIDDLE. */
@@ -116,7 +123,7 @@ int channel_pkt(struct pkt* pkt, struct channel* c)
 	}
 
 	/* no cared pack. */
-	if (c->status != TCP_C_ESTABLISHED && c->status != TCP_C_CLOSE_WAIT)
+	if (c->status != TCP_C_ESTABLISHED)
 		return RE_PKT_DROP;
 	
 	/* now let's do the real channel work. */
@@ -137,8 +144,8 @@ int channel_pkt(struct pkt* pkt, struct channel* c)
 		pkt->app_begin = pkt->l5_hdr + dup_size;
 	} else if (SEQ_GT(seq, c->next_seq)) {
 		/* situation 5.2 */
-		if (tcp_reassemble_push(c->assemble_cache, pkt) < 0) {
-			r = RE_FLOW_TAINTED;
+		if (tcp_reassemble_push(&c->assemble_cache, pkt) < 0) {
+			r = RE_STREAM_TAINTED;
 		} else {
 			r = RE_PKT_CACHED;
 		}
@@ -151,25 +158,30 @@ int channel_pkt(struct pkt* pkt, struct channel* c)
 	}
 
 	/* 1. find followers who was cached. */
-	if ((tmp = tcp_reassemble_pull()) != NULL) {
-		/* 2. append them together with rte indirect buff. */
-			// TODO
-		/* 3. update channel param. */
-			// TODO
-	} else {
-		if (tcp_reassemble_check_tainted()) {
-	}
+	/* 2. append them together with rte indirect buff. */
+	/*
+		Yesterday: the interface design like this: 	
+			1. tcp_reassemble_pull(&c->assemble_cache, c->next_seq)
+			2. chain(pkt, tmp);
+		Now:
+			As hide function chain() is more elaborate, parameter
+			of the func was changed,.
+			Only two situation, we can get there, 
+				A. a current perfect pkt (5.1).
+				B. biger duplicate pkt (4).
+			So c->next_seq must equal to pkt->next_seq;
+	*/
+	tcp_reassemble_pull(&c->assemble_cache, pkt);
+	/* 3. update channel param. */
+	c->next_seq = seq + pkt->l5_len;
 	return r;
 }
 
-int ack(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
+static int ack(struct pkt* pkt, uint8_t pkt_orient, struct stream_tcp* s)
 {
 	struct channel* c, *op;
-	struct stream_tcp* s;
 	struct tcphdr* h;
 	uint32_t ack;
-
-	s = flow->stream;
 
 	if (unlikely(s->status == TCP_S_NONE)) 
 		return 0;
@@ -177,11 +189,11 @@ int ack(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
 	h = pkt->l4_hdr;
 	ack = ntohl(h->ack_seq);
 	if (s->up_orient == pkt_orient) {
-		c = s->up;
-		op = s->down;
+		c = &s->up;
+		op = &s->down;
 	} else {
-		c = s->down;
-		op = s->up;
+		c = &s->down;
+		op = &s->up;
 	}
 	
 	if (unlikely(s->status == TCP_S_MIDDLEING)) {
@@ -189,11 +201,14 @@ int ack(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
 			1. ack the before arriving data in opposite channel.
 			2. trans MIDDLEING to CONNECTED.
 
-		   NOTE: Might there be a situattion ? 
+		   NOTE: Might there be a situation ? 
 			the ack pkt always ack'd the the front one of the last
 			pkt int oppo channel,
 		   acked_seq == 0 is the flag of connecting finished in this
 		   channel.	*/
+		/* also op->status = TCP_C_NONE is the same thing.
+			which one is better ? 
+		*/
 		if (op->acked_seq == 0) {
 			if (op->next_seq == ack) {
 				/* half CONNECTED now. */
@@ -210,6 +225,7 @@ int ack(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
 			if (SEQ_GEQ(op->next_seq, ack)
 					&& SEQ_LT(op->acked_seq, ack)) {
 				op->acked_seq = ack;
+			}
 			return 0;
 		}
 	}
@@ -225,24 +241,37 @@ int ack(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
 			}
 		}
 	} else if (s->status == TCP_S_CLOSING) {
+		if (op->status == TCP_C_FIN_WAIT1 && op->next_seq == ack) {
+			op->acked_seq = ack;
+			op->status = TCP_C_FIN_WAIT2;
+			if (c->status == TCP_C_FIN_WAIT2) {
+				op->status = TCP_C_CLOSED;
+				c->status = TCP_C_CLOSED;
+				/*
+				   s->status = TCP_S_CLOSING_WAIT;
+				   Should we support CLOSING_WAIT ?
+				*/
+				s->status = TCP_S_CLOSED;
+				return RE_STREAM_CLOSED;
+			}
+		}
 	} else if (s->status == TCP_S_CONNECTED) {
+		/* both resend and ack will be drop. */
 		if (is_keep_alive_0byte(pkt, c))
 			return 0;
+		if (SEQ_LT(op->next_seq, ack) && SEQ_LT(op->acked_seq, ack)) {
+			op->acked_seq = ack;
+		}
 	} else {
 		/* skip */;
 	}
 	return 0;
 }
 
-/*
- *	 
- */
-int data(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
+static int data(struct pkt* pkt, uint8_t pkt_orient, struct stream_tcp* s)
 {
+	int r;
 	struct channel* c;
-	struct stream_tcp* s;
-
-	s = flow->stream;
 
 	/* *. Got this packet from middle of a connecting. 
 	   The first data packet will change status from TCP_S_NONE to 
@@ -266,9 +295,9 @@ int data(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
 
 	/* 9.1 determine channel . */
 	if (s->up_orient == pkt_orient)
-		c = s->up;
+		c = &s->up;
 	else
-		c = s->down;
+		c = &s->down;
 		
 	if (s->status == TCP_S_CONNECTED) {
 		/* 9.2 determine: window probe & keep alive packet.
@@ -300,24 +329,22 @@ int data(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
 	}
 	
 	r = channel_pkt(pkt, c);
-	if (r == RE_FLOW_TAINTED)
+	if (r == RE_STREAM_TAINTED)
 		s->status |= STREAM_TCP_FLAG_INVALID;
 	return r;
 }
 
-int syn(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
+static int syn(struct pkt* pkt, uint8_t pkt_orient, struct stream_tcp* s)
 {
 	struct tcphdr* h;
-	struct stream_tcp* s;
-	struct channel* c, *u, *d;
-	uint32_t seq, ack_seq;
+	struct channel* c, *op, *u, *d;
+	uint32_t seq;
 
 	h = pkt->l4_hdr;
 	seq = h->seq;
 
-	s = &(flow->stream);
-	u = &(flow->stream.up);
-	d = &(flow->stream.down);
+	u = &s->up;
+	d = &s->down;
 
 	/* it will be never TCP_S_CLOSED, as design in the process of last pkt
 		who set the CLOSED flag will trigger free(flow).*/
@@ -365,15 +392,16 @@ int syn(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
 			op->status = TCP_C_SYN_RECV;
 		}
 	} else {
-		assert(s->status == TCP_S_CONNECTING);
-		if (unlilkely(!h->ack)) {
+		assert(s->status == TCP_S_CONNECTING
+			|| s->status == TCP_S_MIDDLEING);
+		if (unlikely(!h->ack)) {
 			/* open together. */
 		} else {
 			/* second syn. */
 		}
 
 		c = d;
-		assert(c->status == TCP_C_SYN_RECV)
+		assert(c->status == TCP_C_SYN_RECV);
 		c->last_seq = ntohl(seq);
 		c->next_seq = c->last_seq + 1;
 		c->status = TCP_C_SYN_SENT;
@@ -381,17 +409,37 @@ int syn(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
 	return 0;
 }
 
-int fin(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
+static int fin(struct pkt* pkt, uint8_t pkt_orient, struct stream_tcp* s)
 {
+	struct channel* c;
 
+	if (s->status != TCP_S_CONNECTED && s->status != TCP_S_CLOSING)
+		return 0;
+
+	if (s->up_orient == pkt_orient) {
+		c = &s->up;
+	} else {
+		c = &s->down;
+	}
+
+	if (c->status <= TCP_C_ESTABLISHED) {
+		c->next_seq += 1;
+		c->status = TCP_C_FIN_WAIT1;
+		s->status = TCP_S_CLOSING;
+	}
+	return 0;
 }
 
-int rst(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
+static int rst(struct pkt* pkt, uint8_t pkt_orient, struct stream_tcp* s)
 {
-
+	s->up.status = TCP_C_CLOSED;
+	s->down.status = TCP_C_CLOSED;
+	s->status = TCP_S_CLOSED;
+	
+	return RE_STREAM_CLOSED;
 }
 
-int urg(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
+static int urg(struct pkt* pkt, uint8_t pkt_orient,  struct stream_tcp* s)
 {
 	return 0;
 }
@@ -416,52 +464,64 @@ int urg(struct pkt* pkt, uint8_t pkt_orient, struct flow_item* flow)
 	8. deal with urgent data.
 	9. deal with data packets.
 	99. in different phase, set different timeout value. TODO
+
+	RETURN value:
+		RE_STREAM_CLOSED;
+		RE_PKT_CACHED;
 */
-int stream_tcp_pkt(struct pkt* pkt, struct flow_item* flow)
+int stream_tcp_pkt(struct pkt* pkt, uint8_t pkt_orient,
+		struct stream_tcp* stream)
 {
 	/* 1. */
-	struct wedge_dpdk w = pkt->platform_wedge;
-	rte_mbuf* buf = w.buf;
-	
-	/* 2. */
 	struct tcphdr* h = pkt->l4_hdr;
 	int16_t datalen = pkt->l5_len;
 	int r = -1;
-	void* o = NULL;
-	uint8_t pkt_orient;
 
-	if ((flow->stream.flags & STREAM_TCP_FLAG_INVALID) != 0)
+	if ((stream->flags & STREAM_TCP_FLAG_INVALID) != 0)
 		return RE_COMMON_ERR;
 
-	pkt_orient = flow_orient_decide(pkt, flow);
+	/* 2. */
 	/* 3. 4. */
 	/* order is important as fin pack might be with data. */
 	if (unlikely(h->urg)) {
 		/* 8. TODO: unsupporting now. */
-		r = urg();
+		r = urg(pkt, pkt_orient, stream);
 		if (r == 0)
-			r = ack(pkt, pkt_orient);
+			r = ack(pkt, pkt_orient, stream);
 		goto skip;
 	}
-	if (likely(datalen))
-		/* 9. */
-		r = data(pkt, pkt_orient, o);
-		if (r < 0)
-			goto skip;
-	if (likely(h->ack)
+	/* do ack() before data(), as pkt could be cached in data(). */
+	/* But if 'fin' was cached, what should we do ? */
+	if (likely(h->ack))
 		/* 3. */
-		r = ack(pkt, pkt_orient);
+		r = ack(pkt, pkt_orient, stream);
+	if (likely(datalen)) {
+		if (unlikely(h->fin && stream->status <= TCP_S_MIDDLEING))
+			/* As MIDDLE create features here, let fin escape. */
+			;
+		else {
+			/* But a ofo fin could be going here, than reassembled
+				and go back, itself or chained with by leaders.
+				and the leader will inheriting the FIN flag. 
+			   This logic was implemented in function chain().
+			 */
+			/* 9. */
+			r = data(pkt, pkt_orient, stream);
+			if (r < 0 || r == RE_PKT_CACHED)
+				goto skip;
+		}
+	}
 	if (h->syn)
 		/* 6. */
-		r = syn();
+		r = syn(pkt, pkt_orient, stream);
 	if (unlikely(h->rst))
-		r = rst();
+		r = rst(pkt, pkt_orient, stream);
 	if (h->fin)
 		/* 7. */
-		r = fin(pkt, o);
+		r = fin(pkt, pkt_orient, stream);
 
 	if (unlikely(r == -1))
-		assert();
+		assert(true);
 	/* 10. return right status. */
 skip:
 	return r;
@@ -485,3 +545,16 @@ int stream_tcp_init(struct stream_tcp* tcp)
 
 	return 0;
 }
+
+int stream_tcp_destroy(struct stream_tcp* tcp)
+{
+	struct tcp_reassemble* rsb;
+
+	rsb = &(tcp->up.assemble_cache);
+	tcp_reassemble_destory(rsb);
+	rsb = &(tcp->down.assemble_cache);
+	tcp_reassemble_destory(rsb);
+
+	return 0;
+}
+

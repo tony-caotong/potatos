@@ -8,18 +8,23 @@
 #ifndef __STREAM_TCP_H__
 #define __STREAM_TCP_H__
 
+#include <stdint.h>
+
+#include "list.h"
+#include "tcp_reassemble.h"
+
 enum tcp_status {
 	TCP_C_NONE,
-	TCP_C_LISTEN,
+//	TCP_C_LISTEN,
 	TCP_C_SYN_SENT,
 	TCP_C_SYN_RECV,
 	TCP_C_ESTABLISHED,
 	TCP_C_FIN_WAIT1,
 	TCP_C_FIN_WAIT2,
-	TCP_C_CLOSING,
-	TCP_C_CLOSE_WAIT,
-	TCP_C_TIME_WAIT,
-	TCP_C_LAST_ACK,
+//	TCP_C_CLOSING,
+//	TCP_C_CLOSE_WAIT,
+//	TCP_C_TIME_WAIT,
+//	TCP_C_LAST_ACK,
 	TCP_C_CLOSED
 };
 
@@ -31,10 +36,10 @@ struct channel {
 	
 	/* it is the sender's status.*/
 	enum tcp_status status;
-	list_head assemble_cache;
+	struct tcp_reassemble assemble_cache;
 	/* unused. */
-	list_head urgent_cache;
-}
+	struct list_head urgent_cache;
+};
 
 enum status{
 	TCP_S_NONE,
@@ -42,6 +47,7 @@ enum status{
 	TCP_S_MIDDLEING,
 	TCP_S_CONNECTED,
 	TCP_S_CLOSING,
+//	TCP_S_CLOSING_WAIT,
 	TCP_S_CLOSED
 };
 
@@ -62,8 +68,11 @@ struct stream_tcp {
 
 	enum status status;
 	uint32_t flags;
-}
+};
 
-int stream_tcp_pkt(struct pkt* pkt, struct flow_item* flow);
+int stream_tcp_init(struct stream_tcp* tcp);
+int stream_tcp_pkt(struct pkt* pkt, uint8_t pkt_orient,
+	struct stream_tcp* stream);
+int stream_tcp_destroy(struct stream_tcp* tcp);
 
 #endif /*__STREAM_TCP_H__*/

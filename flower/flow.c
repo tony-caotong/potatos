@@ -52,7 +52,7 @@ int flow_ipv4_create(uint32_t lcore_id)
 	}
 	Objs[lcore_id].hash = h;
 
-	/* NOTICE: one pool per each lcore or one pool per each socket? */
+	/* NOTICE: one pool per each lcore or one pool per each socket ? */
 	sprintf(name, "flow_ipv4_pool_%d", lcore_id);
 	if ((p = rte_mempool_create(name, CONFIG_FLOW_IPV4_HASH_ENTRIES,
 			sizeof(struct flow_item), 0, 0, NULL, NULL, NULL, NULL,
@@ -84,6 +84,7 @@ struct flow_item* flow_ipv4_new(uint32_t lcore_id, struct ipv4_key* key)
 	flow_touch(item);
 	item->ncount = 0;
 	item->scount = 0;
+	item->stream = NULL;
 
 	if (rte_hash_add_key_data(h, &(item->key), item) < 0) {
 		rte_mempool_put(p, (void**)(&item));
@@ -112,6 +113,9 @@ int flow_ipv4_del(uint32_t lcore_id, struct flow_item* item)
 			fprintf(stderr, "DEBUG: flow_ipv4_del(): unfound\n");
 		}
 	}
+
+	assert(item->stream == NULL);
+
 	rte_mempool_put(p, item);
 	return 0;
 }
@@ -146,7 +150,7 @@ static int generate_ipv4_key(uint32_t sip, uint16_t sport, uint32_t dip,
 		big_ip = sip;
 		big_port = sport;
 	}
-	key->part1 = (small_ip << 32) + (samll_port << 16) + (big_ip >> 16);
+	key->part1 = (small_ip << 32) + (small_port << 16) + (big_ip >> 16);
 	key->part2 = (big_ip << 48) + (big_port << 32) + protocol;
 	return reversed;
 }
@@ -179,7 +183,7 @@ struct flow_item* flow_ipv4_find_or_add(uint32_t lcore_id,
 		*/
 		item = flow_ipv4_new(lcore_id, &key);
 		item->protocol = protocol;
-		if (!reverse) {
+		if (!revert) {
 			item->wip = sip;
 			item->wport = sport;
 			item->eip = dip;
@@ -268,7 +272,6 @@ void flow_ipv4_state(uint32_t lcore_id)
 		struct in_addr ias;
 		struct in_addr iad;
 		int r;
-		struct list_head* i;
 
 		if ((r = rte_hash_iterate(h, (const void**)(&key),
 				(void**)(&flow), &it)) < 0) {
@@ -291,8 +294,8 @@ void flow_ipv4_state(uint32_t lcore_id)
 			ntohs(flow->eport));
 		fprintf(stderr, "FLOW: protocol: %u\n", flow->protocol);
 		fprintf(stderr, "FLOW: atime: %lu\n", flow->atime);
-		fprintf(stderr, "FLOW: key: 0x%016lx%016lx  salt: %u\n",
-			flow->key.part1, flow->key.part2, flow->key_salt);
+		fprintf(stderr, "FLOW: key: 0x%016lx%016lx\n",
+			flow->key.part1, flow->key.part2);
 		count++;
 		fprintf(stderr, "FLOW: north count: %u\n", flow->ncount);
 		fprintf(stderr, "FLOW: south count: %u\n", flow->scount);
@@ -301,7 +304,7 @@ void flow_ipv4_state(uint32_t lcore_id)
 		" total pkts found: %zu\n", count, pkt_count);
 }
 
-static int flow_ipv4_reassemble(struct pkt* pkt, struct flow_item** flowp)
+static int flow_ipv4(struct pkt* pkt, struct flow_item** flowp)
 {
 	struct wedge_dpdk* wedge;
 	uint32_t lcore_id;
@@ -316,7 +319,7 @@ static int flow_ipv4_reassemble(struct pkt* pkt, struct flow_item** flowp)
 	dip = pkt->tuple5.dip;
 	protocol = pkt->tuple5.l4_proto;
 
-	fprintf(stderr, "Go in flow_ipv4_reassemble()\n");
+	fprintf(stderr, "Go in flow_ipv4()\n");
 	/* 1. decide 5 tuples or 3 tuples. */
 	if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP) {
 		sport = pkt->tuple5.sport;
@@ -341,8 +344,10 @@ static int flow_ipv4_reassemble(struct pkt* pkt, struct flow_item** flowp)
 
 int flow_orient_decide(struct pkt* pkt, struct flow_item* flow)
 {
-	uint32_t sip, dip;
-	uint16_t sport, dport;
+	uint32_t sip;
+	uint32_t dip __attribute__((unused));
+	uint16_t sport;
+	uint16_t dport __attribute__((unused));
 	uint8_t protocol;
 	uint8_t orient;
 
@@ -377,7 +382,7 @@ int flow_pkt(struct pkt* pkt, struct flow_item** flowp)
 
 	switch (l3_proto) {
 	case ETHERTYPE_IP:
-		r = flow_ipv4_reassemble(pkt, flowp);
+		r = flow_ipv4(pkt, flowp);
 		break;
 	case ETHERTYPE_IPV6:
 		/*r = decode_ipv6(p, l, pkt);*/

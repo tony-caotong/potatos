@@ -10,8 +10,12 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
+
+#include <rte_mbuf.h>
 
 #include "list.h"
+#include "wedge.h"
 
 #define STACK_SIZE 16
 
@@ -62,6 +66,17 @@ struct pkt {
 
 } __attribute__((packed));
 
+static inline struct rte_mbuf* get_mbuf(struct pkt* pkt)
+{
+	struct rte_mbuf* m;
+	struct wedge_dpdk* w;
+
+	w = (struct wedge_dpdk*)(pkt->platform_wedge);
+	m = w->buf;
+
+	return m;
+}
+
 #define add_proto_item(item, string) item
 enum proto_t {
 	PROTO_NONE,
@@ -98,10 +113,11 @@ static inline bool proto_push(struct pkt* pkt, void* p, enum proto_t protocol)
 	return true;
 }
 
-#define RE_FLOW_TAINTED			-2
+#define RE_STREAM_TAINTED		-2
 #define RE_COMMON_ERR			-1
 #define RE_PKT_SUCC			0
 #define RE_PKT_DROP			1
 #define RE_PKT_CACHED			2
+#define RE_STREAM_CLOSED		3
 
 #endif /*__PKT_H__*/
