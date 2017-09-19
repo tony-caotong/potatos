@@ -51,6 +51,7 @@ struct pkt {
 
 	/* platform things */
 	void* platform_wedge;
+	void* mbuf;
 
 	/* ip reassemble */
 	uint16_t type;

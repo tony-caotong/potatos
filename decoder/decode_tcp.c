@@ -15,6 +15,7 @@
 int decode_tcp(char* raw, uint32_t len, struct pkt* pkt, uint32_t plen)
 {
 	struct tcphdr* hdr;
+	struct rte_mbuf* m;
 	uint32_t sport, dport;
 	int16_t hdr_len;
 
@@ -36,6 +37,8 @@ int decode_tcp(char* raw, uint32_t len, struct pkt* pkt, uint32_t plen)
 	/* assign l5 header */
 	pkt->l5_hdr = raw + hdr_len;
 	pkt->l5_len = plen - hdr_len;
+	m = pkt->mbuf;
+	m->l4_len = hdr_len;
 
 	return 0;
 }

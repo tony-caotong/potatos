@@ -10,7 +10,6 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 
-#include "wedge.h"
 #include "list.h"
 #include "tcp_reassemble.h"
 
@@ -37,10 +36,10 @@ static int chain(struct pkt* first, struct pkt* second)
 
 	struct rte_mbuf* f, *s;
 	struct pkt* pkt;
-	struct wedge_dpdk* w;
 	uint32_t fs, fn, ss, sn;
-	uint8_t th_fin = 0;
-	int count = 0;
+	uint32_t adj;;
+	uint8_t th_fin;
+	int count;
 
 	/* a situation need to be handled: 
 		first segment for second pkt was coverd by first pkt,
@@ -49,19 +48,32 @@ static int chain(struct pkt* first, struct pkt* second)
 		segment and followers. */
 	seq(first, &fs, &fn);
 	seq(second, &ss, &sn);
-	w = (struct wedge_dpdk*)&first->platform_wedge;
-	f = w->buf;
-	w = (struct wedge_dpdk*)&second->platform_wedge;
-	s = w->buf;
+	f = first->mbuf;
+	s = second->mbuf;
+	adj = 0;
+	th_fin = 0;
+	count = 0;
 	if (fn > ss) {
-		uint32_t pkt_len, offset;
+		uint32_t pkt_len, ss_cur;
 		struct rte_mbuf* tmp;				
 
-		offset = ss;
-		while (s != NULL && offset + s->data_len < fn) {
+		/*	fs          fn
+			|xxxxxxxxxxx|
+			      ss    ^      sn
+			      |xxxxxxxxxxxxx|
+			         ^  ^
+			        ss_cur
+			            ^
+			           adj
+		*/
+		ss_cur = ss;
+		pkt = (void*)s + sizeof(struct rte_mbuf);
+		while (s && ss_cur + pkt->l5_len < fn) {
+			/* TODO: logic is not good here, as s->pkt_len and 
+			pkt->l5_len depand on each other. */
 			pkt_len = s->pkt_len - s->data_len;
 			tmp = s;
-			offset += s->data_len;
+			ss_cur += pkt->l5_len;
 			s = s->next;
 			s->pkt_len = pkt_len;
 			s->nb_segs = tmp->nb_segs - 1;
@@ -69,21 +81,26 @@ static int chain(struct pkt* first, struct pkt* second)
 			count--;
 		}
 		assert(s != NULL); /* Caller makes that could be. */
+		assert(s->nb_segs >= 1);
 		if (!s)
 			return count;
-		assert(offset >= sn);
-		
-		/* IMPORTANT: FIN flag should be reserved.
-			any packet droped before, is a duplicate one, of cause 
-			FIN is never covered by a longger sequence number.
-		 */
-		/* TODO: this line could be more beautiful. */
-		pkt = (void*)s + sizeof(struct rte_mbuf);
-		th_fin = ((struct tcphdr*)(pkt->l4_hdr))->fin;
-		/* NOTE: data_len / data_off / pkt_len */
-		rte_pktmbuf_adj(s, fn - offset);
+		assert(ss_cur >= sn);
+		adj = fn - ss_cur;
 	}
 	assert(!(fn > ss)); /* Caller makes that could be. */
+	
+	/* IMPORTANT: FIN flag should be reserved.
+		any packet droped before, is a duplicate one, of cause 
+		FIN is never covered by a pkt with longger sequence
+		dnumber.
+	 */
+	/* TODO: this line could be more beautiful. */
+	pkt = (void*)s + sizeof(struct rte_mbuf);
+	th_fin = ((struct tcphdr*)(pkt->l4_hdr))->fin;
+
+	adj += (s->l2_len + s->l3_len + s->l4_len);
+	/* NOTE: data_len / data_off / pkt_len */
+	rte_pktmbuf_adj(s, adj);
 
 	/* For struct pkt:
 		update first pkt's l5_len. */
@@ -105,7 +122,6 @@ static void* pull(struct tcp_reassemble* tr, uint32_t seq_expect)
 	struct list_head* first;
 	struct pkt* p;
 	struct rte_mbuf* m;
-	struct wedge_dpdk* w;
 	uint32_t se, nseq;
 
 	if (list_empty(&tr->list)) 
@@ -116,8 +132,7 @@ static void* pull(struct tcp_reassemble* tr, uint32_t seq_expect)
 	seq(p, &se, &nseq);
 	if (se <= seq_expect) {
 		list_del(first);
-		w = (struct wedge_dpdk*)(p->platform_wedge);
-		m = w->buf;
+		m = p->mbuf;
 		tr->count -= m->nb_segs;
 		/* update ts, if success pull. */
 		tr->ts = time(NULL);

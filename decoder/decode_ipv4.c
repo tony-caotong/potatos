@@ -36,9 +36,13 @@ int decode_ipv4(char* raw, int len, struct pkt* pkt)
 
 	/* TODO: Filter could be process here. */
 
+	struct rte_mbuf* mm = pkt->mbuf;
+	mm->l3_len = iph->ihl * 4;
+
 	/* 1. reassemble ipv4 frag pkts. */
 	frag_off = ntohs(iph->frag_off);
 	if (IPV4_IS_FRAG(frag_off)) {
+		/* TODO: it seems like a bug here ! */	
 #ifdef _PLATFORM_DPDK
 		struct wedge_dpdk* wedge = pkt->platform_wedge;
 		struct rte_mbuf* m = wedge->buf;

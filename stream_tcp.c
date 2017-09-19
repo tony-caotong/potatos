@@ -259,7 +259,7 @@ static int ack(struct pkt* pkt, uint8_t pkt_orient, struct stream_tcp* s)
 		/* both resend and ack will be drop. */
 		if (is_keep_alive_0byte(pkt, c))
 			return 0;
-		if (SEQ_LT(op->next_seq, ack) && SEQ_LT(op->acked_seq, ack)) {
+		if (SEQ_LEQ(op->next_seq, ack) && SEQ_LT(op->acked_seq, ack)) {
 			op->acked_seq = ack;
 		}
 	} else {
@@ -293,13 +293,19 @@ static int data(struct pkt* pkt, uint8_t pkt_orient, struct stream_tcp* s)
 		s->flags |= STREAM_TCP_FLAG_MID_CREATE;
 	}
 
+	if (s->status != TCP_S_MIDDLEING && s->status != TCP_S_CONNECTED
+		&& s->status != TCP_S_CLOSING) {
+		/* skip unexpecting pkt. */
+		return 0;
+	}
+
 	/* 9.1 determine channel . */
 	if (s->up_orient == pkt_orient)
 		c = &s->up;
 	else
 		c = &s->down;
 		
-	if (s->status == TCP_S_CONNECTED) {
+	if (s->status == TCP_S_CONNECTED || s->status == TCP_S_CLOSING) {
 		/* 9.2 determine: window probe & keep alive packet.
 			WINDOW_PROBE
 			1. data_length == 1
@@ -320,12 +326,6 @@ static int data(struct pkt* pkt, uint8_t pkt_orient, struct stream_tcp* s)
 		*/
 		if (is_resend(pkt, c))
 			return 0;
-	}
-
-	if (s->status != TCP_S_MIDDLEING && s->status != TCP_S_CONNECTED
-		&& s->status != TCP_S_CLOSING) {
-		/* skip unexpecting pkt. */
-		return 0;
 	}
 	
 	r = channel_pkt(pkt, c);
@@ -497,7 +497,10 @@ int stream_tcp_pkt(struct pkt* pkt, uint8_t pkt_orient,
 		r = ack(pkt, pkt_orient, stream);
 	if (likely(datalen)) {
 		if (unlikely(h->fin && stream->status <= TCP_S_MIDDLEING))
-			/* As MIDDLE create features here, let fin escape. */
+			/* As MIDDLE create features here, let fin escape.
+			   That means we do not care about the payload from
+			   a fin packet, just skip and let fin to fin.
+			*/
 			;
 		else {
 			/* But a ofo fin could be going here, than reassembled

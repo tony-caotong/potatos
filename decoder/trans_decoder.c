@@ -10,7 +10,6 @@
 
 #include "config.h"
 #include "trans_decoder.h"
-#include "wedge.h"
 #include "decode_ipv4.h"
 #include "ip_reassemble.h"
 
@@ -25,17 +24,13 @@ int decode_pkt(char* raw, int len, struct pkt* pkt)
 	int i, l = len, r = 0;
 	void* p;
 	
-#ifdef _PLATFORM_DPDK
 	int l2_len;
-	struct wedge_dpdk* wedge;
 	struct rte_mbuf* m;
-#endif
+
 	hdr = (struct ether_header*)raw;
 	p = raw + sizeof(struct ether_header);
 	l -= sizeof(struct ether_header);
-#ifdef _PLATFORM_DPDK
 	l2_len = sizeof(struct ether_header);
-#endif
 	if (!proto_push(pkt, hdr, PROTO_ETHER))
 		return -1;
 	type = ntohs(hdr->ether_type);
@@ -45,18 +40,14 @@ int decode_pkt(char* raw, int len, struct pkt* pkt)
 		type = ntohs(vh->eth_proto);
 		p = vh + 1;
 		l -= sizeof(struct vlan_header);
-#ifdef _PLATFORM_DPDK
 		l2_len += sizeof(struct vlan_header);
-#endif
 		if (!proto_push(pkt, vh, PROTO_VLAN))
 			return -1;
 	}
 
-#ifdef _PLATFORM_DPDK
-	wedge = pkt->platform_wedge;
-	m = wedge->buf;
+	m = pkt->mbuf;
 	m->l2_len = l2_len;
-#endif
+
 	pkt->l3_proto = type;
 	switch (type) {
 	case ETHERTYPE_IP:

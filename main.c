@@ -180,6 +180,7 @@ int handle_mbuf(struct rte_mbuf* buf, uint32_t sockid, uint32_t lcore_id,
 	wedge.cur_tsc = cur_tsc;
 	pkt->type = PKT_TYPE_NONE;
 	pkt->platform_wedge = &wedge;
+	pkt->mbuf = buf;
 
 	if ((r = decode_pkt(raw, len, pkt)) < 0)
 		return r;

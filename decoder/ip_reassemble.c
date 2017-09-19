@@ -74,10 +74,10 @@ char* ipv4_reassemble(char* raw, unsigned len, char** out, unsigned* ol,
 	tbl = Objs[lcore_id].tbl;
 	dr = &(Objs[lcore_id].death_row);
 
-	p = rte_ipv4_frag_reassemble_packet(tbl, dr, wedge->buf,
+	p = rte_ipv4_frag_reassemble_packet(tbl, dr, pkt->mbuf,
 		wedge->cur_tsc, (struct ipv4_hdr*)raw);
 	if (p != NULL) {
-		if (p != wedge->buf)
+		if (p != pkt->mbuf)
 			wedge->buf = p;
 		*ol = p->data_len - p->l2_len;
 		*out = rte_pktmbuf_mtod(p, char*) + p->l2_len;
