@@ -10,16 +10,13 @@ include $(RTE_SDK)/mk/rte.vars.mk
 
 APP=potatos
 DECODER_DIR = $(SRCDIR)/decoder
-FLOWER_DIR = $(SRCDIR)/flower
 UTILS_DIR = $(SRCDIR)/utils
 
 SRCS-y := $(patsubst %.c, %.o, $(wildcard $(SRCDIR)\/*.c))
 SRCS-y += $(patsubst %.c, %.o, $(wildcard $(DECODER_DIR)\/*.c))
-SRCS-y += $(patsubst %.c, %.o, $(wildcard $(FLOWER_DIR)\/*.c))
 SRCS-y += $(patsubst %.c, %.o, $(wildcard $(UTILS_DIR)\/*.c))
 CFLAGS += -I$(SRCDIR)/
 CFLAGS += -I$(DECODER_DIR)/
-CFLAGS += -I$(FLOWER_DIR)/
 CFLAGS += -I$(UTILS_DIR)/
 
 CFLAGS += -Wall
