@@ -17,6 +17,10 @@
 #define FLOW_SOUTH 1
 #define FLOW_ORIENT_UNKNOWN 255
 
+#define EVENT_NONE  0
+#define EVENT_OPEN  1
+#define EVENT_CLOSE 2
+
 struct ipv4_key {
 	uint64_t part1;
 	uint64_t part2;
@@ -33,6 +37,7 @@ struct ipv4_key {
 struct flow_item {
 	/* things about key. */
 	struct ipv4_key key;
+	/* could be remove. */
 	uint8_t protocol;
 	uint32_t wip;
 	uint32_t eip;
@@ -42,9 +47,16 @@ struct flow_item {
 	time_t atime;
 	uint32_t ncount;
 	uint32_t scount;
+	uint64_t nbyte;
+	uint64_t sbyte;
 
 	/* external data. */
 	struct stream_tcp* stream;
+	/* could be remove. */
+	uint32_t event;
+	uint32_t session_type;
+	void* session;
+
 }__attribute__((packed));
 
 typedef void (*flow_timeout_cb)(uint32_t lcore_id, struct flow_item* flow);

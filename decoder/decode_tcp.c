@@ -37,6 +37,9 @@ int decode_tcp(char* raw, uint32_t len, struct pkt* pkt, uint32_t plen)
 	/* assign l5 header */
 	pkt->l5_hdr = raw + hdr_len;
 	pkt->l5_len = plen - hdr_len;
+
+	
+	
 	m = pkt->mbuf;
 	m->l4_len = hdr_len;
 

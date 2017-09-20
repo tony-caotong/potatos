@@ -141,7 +141,8 @@ static int channel_pkt(struct pkt* pkt, struct channel* c)
 		c->last_seq = seq;
 		c->next_seq = next_seq;
 		pkt->type |= PKT_TYPE_DULPLICATE_L5DATA;
-		pkt->app_begin = pkt->l5_hdr + dup_size;
+		pkt->l5_hdr += dup_size;
+		pkt->l5_len -= dup_size;
 	} else if (SEQ_GT(seq, c->next_seq)) {
 		/* situation 5.2 */
 		if (tcp_reassemble_push(&c->assemble_cache, pkt) < 0) {

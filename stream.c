@@ -73,6 +73,7 @@ int stream_pkt(struct pkt* pkt, struct flow_item* flow)
 
 	p = Objs[lcore_id].pool;
 	s = flow->stream;
+	flow->event = EVENT_NONE;
 
 	if (!s) {
 		if (rte_mempool_get(p, (void**)(&s)) < 0) {
@@ -80,6 +81,7 @@ int stream_pkt(struct pkt* pkt, struct flow_item* flow)
 		}
 		stream_tcp_init(s);
 		flow->stream = s;
+		flow->event = EVENT_OPEN;
 	}
 
 	if (s->flags & STREAM_TCP_FLAG_INVALID)
@@ -91,6 +93,7 @@ int stream_pkt(struct pkt* pkt, struct flow_item* flow)
 		stream_tcp_destroy(s);
 		rte_mempool_put(p, s);
 		flow->stream = NULL;
+		flow->event = EVENT_CLOSE;
 	}
 	return r;
 }

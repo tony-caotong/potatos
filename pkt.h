@@ -60,10 +60,12 @@ struct pkt {
 
 	void* l3_hdr;
 	void* l4_hdr;
+	/* when 'PKT_TYPE_DULPLICATE_L5DATA' was set. 
+	   l5_hdr & l5_len will be change.
+	*/
 	void* l5_hdr;
 	uint64_t l5_len;
-	/* valid only when 'PKT_TYPE_DULPLICATE_L5DATA' was set. */
-	void* app_begin;
+	uint16_t pad_len;
 
 } __attribute__((packed));
 

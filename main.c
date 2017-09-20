@@ -31,6 +31,8 @@
 #include "wedge.h"
 #include "debug.h"
 #include "stream.h"
+#include "session.h"
+#include "atom.h"
 
 struct share_block {
 	sem_t sem_monitor;
@@ -160,12 +162,15 @@ int handle_mbuf(struct rte_mbuf* buf, uint32_t sockid, uint32_t lcore_id,
 	int len;
 	struct pkt* pkt;
 	struct flow_item* flow;
+	char* atom_data;
+	int atom_len;
 	static struct wedge_dpdk wedge;
 
 	raw = rte_pktmbuf_mtod(buf, char*);
 	len = buf->data_len;
 	r = RE_PKT_SUCC;
 
+	/* TODO: How to determine this pack is snaped. */
 	/* 1. counters and staters. */
 	// TODO
 
@@ -196,6 +201,16 @@ int handle_mbuf(struct rte_mbuf* buf, uint32_t sockid, uint32_t lcore_id,
 			/* TODO: */;
 		return r; 
 	}
+	if (r == RE_PKT_CACHED)
+		return r;
+
+	if ((r = session_pkt(pkt, flow, &atom_data, &atom_len)) < 0)
+		goto close;
+
+	if (atom_data)
+		atom_emit(flow, atom_data, atom_len);
+	
+close:
 	if (r == RE_STREAM_CLOSED)
 		flow_ipv4_del(lcore_id, flow);
 	else if (r == RE_PKT_CACHED)
@@ -219,6 +234,8 @@ int lcore_init(uint32_t lcore_id)
 		return -1;
 	if (stream_create(lcore_id) < 0)
 		return -1;
+	if (session_init(lcore_id) < 0)
+		return -1;
 	return 0;
 }
 
@@ -236,6 +253,8 @@ int lcore_destroy(uint32_t lcore_id)
 	if (flow_ipv4_destroy(lcore_id) < 0)
 		return -1;
 	if (stream_destroy(lcore_id) < 0)
+		return -1;
+	if (session_destroy(lcore_id) < 0)
 		return -1;
 	return 0;
 }

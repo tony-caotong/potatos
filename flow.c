@@ -16,6 +16,7 @@
 #include "config.h"
 #include "flow.h"
 #include "wedge.h"
+#include "detect.h"
 
 struct flow_obj {
 	struct rte_hash* hash;
@@ -165,6 +166,7 @@ struct flow_item* flow_ipv4_find_or_add(uint32_t lcore_id,
 	struct ipv4_key key;
 	uint8_t revert;
 	uint8_t orient;
+	uint32_t session_type;
 
 	h = Objs[lcore_id].hash;
 
@@ -180,9 +182,15 @@ struct flow_item* flow_ipv4_find_or_add(uint32_t lcore_id,
 		/* TODO: Let's filter it first.
 			any no payload ack pkt, and fin even if has payload.
 			and others.
+		   @2017-09-19: should be put in main function().
 		*/
+		if (detect_flow(sip, sport, dip, dport, protocol,
+				&session_type) < 0)
+			return NULL;
+
 		item = flow_ipv4_new(lcore_id, &key);
 		item->protocol = protocol;
+		item->session_type = session_type;
 		if (!revert) {
 			item->wip = sip;
 			item->wport = sport;

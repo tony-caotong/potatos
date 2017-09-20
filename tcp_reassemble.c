@@ -98,13 +98,13 @@ static int chain(struct pkt* first, struct pkt* second)
 	pkt = (void*)s + sizeof(struct rte_mbuf);
 	th_fin = ((struct tcphdr*)(pkt->l4_hdr))->fin;
 
+	/* adjust */
 	adj += (s->l2_len + s->l3_len + s->l4_len);
-	/* NOTE: data_len / data_off / pkt_len */
 	rte_pktmbuf_adj(s, adj);
 
 	/* For struct pkt:
 		update first pkt's l5_len. */
-	first->l5_len += s->pkt_len;
+	first->l5_len += (s->pkt_len - pkt->pad_len);
 	count += s->nb_segs;
 	/* merge FIN flag only. */
 	((struct tcphdr*)(first->l4_hdr))->fin |= (th_fin & 0x00000001u);

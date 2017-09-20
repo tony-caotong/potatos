@@ -10,6 +10,7 @@
 
 #include <rte_mbuf.h>
 
+void debug_print_binary(char* capital, char* buf, size_t length);
 void debug_print_mbuf_infos(struct rte_mbuf* buf);
 
 #endif /*__DEBUG_H__*/

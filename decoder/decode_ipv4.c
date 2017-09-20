@@ -34,6 +34,7 @@ int decode_ipv4(char* raw, int len, struct pkt* pkt)
 	if (iph->version != 4)
 		return -1;
 
+	/* TODO: if snaped, warning and drop. */
 	/* TODO: Filter could be process here. */
 
 	struct rte_mbuf* mm = pkt->mbuf;
@@ -63,6 +64,14 @@ int decode_ipv4(char* raw, int len, struct pkt* pkt)
 	/* 2. decode sub protocol. */
 	hlen = iph->ihl * 4;
 	l = ntohs(iph->tot_len);
+	/* 1. need to be pad. 2. !(sub situation). 
+	   	a. snapped.
+		b. capture from sender's port, before padding happen.
+	*/
+	if (l < 46 && len >= 46)
+		pkt->pad_len = 46 - l;
+	else
+		pkt->pad_len = 0;
 	/* do not check valid of 'l' and 'len', as pkt might be snaped. */
 	protocol = iph->protocol;
 	/*

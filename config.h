@@ -22,5 +22,6 @@
 #define CONFIG_TCP_STREAM_ENTRIES	(1024*1024)
 
 #define _PLATFORM_DPDK
+#define DEBUG
 
 #endif /*__CONFIG_H__*/

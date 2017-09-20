@@ -9,7 +9,7 @@
 
 #include "debug.h"
 
-static void debug_print_binary(char* capital, char* buf, size_t length)
+void debug_print_binary(char* capital, char* buf, size_t length)
 {
 	int i = 0;
 	
