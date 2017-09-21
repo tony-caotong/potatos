@@ -21,6 +21,12 @@
 #define EVENT_OPEN  1
 #define EVENT_CLOSE 2
 
+/*
+	This is another ideal:
+		key = strcat(int(part1) + int(part2), protocol);
+		part1 = hash_key(source_ip, source_port);
+		part2 = hash_key(dest_ip, dest_port);
+*/
 struct ipv4_key {
 	uint64_t part1;
 	uint64_t part2;
